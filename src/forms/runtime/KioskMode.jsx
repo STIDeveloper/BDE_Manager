@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, CloudOff, CloudUpload, Expand, KeyRound, Lock, LogOut, RefreshCw, Wifi, WifiOff } from 'lucide-react';
 import { flattenItems } from '../engine/index.js';
+import { isBackendConfigured } from '../../backend/config.js';
 import FormRenderer from './FormRenderer.jsx';
 import Shell, { StateCard } from './Shell.jsx';
 import RichText from './RichText.jsx';
@@ -131,7 +132,9 @@ export default function KioskMode({ definition, slug: slugProp, formId = null, c
   }, [resetSeconds]);
 
   const flush = useCallback(async () => {
-    if (!navigator.onLine) return;
+    // Mode local (aucun espace connecté) : pas de serveur. Les réponses restent
+    // sur l'appareil et sont reprises par le Studio (Formulaires › Réponses).
+    if (!navigator.onLine || !isBackendConfigured()) return;
     const res = await kioskQueue.flush(entry => sendRef.current(entry), { slug });
     if (res.sent) setFlushInfo(`${res.sent} réponse${res.sent > 1 ? 's' : ''} envoyée${res.sent > 1 ? 's' : ''}.`);
     else if (res.failed) setFlushInfo(`${res.failed} réponse${res.failed > 1 ? 's' : ''} refusée${res.failed > 1 ? 's' : ''} par le serveur (gardée${res.failed > 1 ? 's' : ''} sur la borne).`);
@@ -217,8 +220,10 @@ export default function KioskMode({ definition, slug: slugProp, formId = null, c
       </span>
       <span role="status" style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: '0.85rem', fontWeight: total ? 700 : 500 }}>
         {total ? <CloudOff size={16} aria-hidden="true" /> : <CloudUpload size={16} aria-hidden="true" />}
-        {total ? `${total} réponse${total > 1 ? 's' : ''} en attente d’envoi` : 'Toutes les réponses sont envoyées'}
-        {pending.errors > 0 && ` (dont ${pending.errors} refusée${pending.errors > 1 ? 's' : ''})`}
+        {!isBackendConfigured()
+          ? `${total} réponse${total > 1 ? 's' : ''} enregistrée${total > 1 ? 's' : ''} sur cet appareil (mode local)`
+          : (total ? `${total} réponse${total > 1 ? 's' : ''} en attente d’envoi` : 'Toutes les réponses sont envoyées')}
+        {isBackendConfigured() && pending.errors > 0 && ` (dont ${pending.errors} refusée${pending.errors > 1 ? 's' : ''})`}
       </span>
       {flushInfo && <span className="fr-help" style={{ marginTop: 0 }}>{flushInfo}</span>}
       <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>

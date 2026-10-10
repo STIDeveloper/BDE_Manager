@@ -32,6 +32,8 @@ const PUBLIC_PAGES = {
   espace: lazy(() => import('./forms/portal/PortalPage.jsx')),
   bulletin: lazy(() => import('./forms/vote/BallotCheckPage.jsx')),
   billet: lazy(() => import('./modules/events/checkin/TicketPage.jsx')),
+  // Mode borne : hors de la coque (aucune navigation vers les autres données).
+  borne: lazy(() => import('./modules/forms/KioskRoute.jsx')),
 };
 
 // Écrans des modules : src/modules/<module>/Page.jsx, découverts
@@ -71,7 +73,7 @@ const SECTIONS = [
 
 // Routes publiques, affichées hors de la coque de l'application.
 // #/f/<slug> : page répondant d'un formulaire (accès public, sans la coque).
-const PUBLIC_SECTIONS = new Set(['verifier', 'f', 'espace', 'bulletin', 'billet']);
+const PUBLIC_SECTIONS = new Set(['verifier', 'f', 'espace', 'bulletin', 'billet', 'borne']);
 
 // Sections affichées dans la barre inférieure mobile (le reste : menu « Plus »).
 const MOBILE_PRIMARY = ['dashboard', 'kanban', 'calendar', 'documents'];

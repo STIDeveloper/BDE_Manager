@@ -7,6 +7,7 @@ import { useFormsStore } from './store.js';
 import FormList from './FormList.jsx';
 import Editor from './editor/Editor.jsx';
 
+
 export default function FormsPage() {
   const route = useRoute();
   const definitions = useFormsStore(s => s.definitions);
@@ -23,6 +24,11 @@ export default function FormsPage() {
           <button type="button" className="btn-secondary" onClick={() => navigate('forms')}>Retour aux formulaires</button>
         </div>
       );
+    }
+    if (route.rest[1] === 'borne') {
+      // Ancienne adresse : la borne a sa propre route, hors de l'application.
+      navigate('borne', def.id);
+      return null;
     }
     return <Editor key={formId} formId={formId} initialTab={route.rest[1]} />;
   }

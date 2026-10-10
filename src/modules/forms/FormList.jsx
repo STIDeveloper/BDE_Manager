@@ -2,6 +2,7 @@
 import { useMemo, useState, useId } from 'react';
 import {
   Plus, Search, ClipboardList, Copy, Archive, ArchiveRestore, Trash2, Link2, QrCode, Code2, FolderOpen, MoreVertical, Download, Inbox,
+  Tablet,
 } from 'lucide-react';
 import { useFormsStore, hasUnpublishedChanges } from './store.js';
 import { FORM_KINDS } from '../../forms/schema.js';
@@ -179,6 +180,7 @@ function FormCard({ def, publication, onShare }) {
               <MenuItem icon={Link2} onClick={copyLink}>Copier le lien</MenuItem>
               <MenuItem icon={QrCode} onClick={() => { setMenu(false); onShare('qr'); }}>QR code du lien</MenuItem>
               <MenuItem icon={Code2} onClick={() => { setMenu(false); onShare('embed'); }}>Code d'intégration</MenuItem>
+              <MenuItem icon={Tablet} onClick={() => { setMenu(false); navigate('borne', def.id); }}>Mode borne (accueil, hors ligne)</MenuItem>
               <MenuItem icon={Download} onClick={exportJson}>Exporter (JSON)</MenuItem>
               {canWrite && <MenuItem icon={def.status === 'archived' ? ArchiveRestore : Archive} onClick={archive}>{def.status === 'archived' ? 'Désarchiver' : 'Archiver'}</MenuItem>}
               {canManage && <MenuItem icon={Trash2} danger onClick={remove}>Supprimer…</MenuItem>}
