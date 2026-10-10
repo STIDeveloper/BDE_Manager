@@ -68,8 +68,7 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2,webmanifest}'],
         // Non précachés : écrans de démarrage iOS (46 jpg, servis à l'installation) et
-        // icons.svg (sprite du template Vite, référencé nulle part)
-        globIgnores: ['**/apple-splash-*.jpg', 'icons.svg', '**/node_modules/**'],
+        globIgnores: ['**/apple-splash-*.jpg', '**/node_modules/**'],
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
         cleanupOutdatedCaches: true,
         navigateFallback: '/index.html',

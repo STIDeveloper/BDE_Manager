@@ -40,7 +40,7 @@ export default defineConfig([
   },
   {
     // Scripts CommonJS (require / module.exports)
-    files: ['fix_toast.js', '**/*.cjs'],
+    files: ['**/*.cjs'],
     languageOptions: {
       sourceType: 'commonjs',
       globals: globals.node,
