@@ -46,6 +46,14 @@
 //     source?: 'members'|'events'|'roles'|'poles' // choix alimentés par les données du BDE
 //   }
 //
+// Conventions fixées par le moteur (src/forms/engine/README.md) :
+//   - section répétable : `key` obligatoire, réponses answers[key] = [{ …clés internes… }],
+//     erreurs sous la forme 'groupe.index.clé' ;
+//   - champ calculé (type 'calculated') : formule dans `item.expr` (ou `default.expr`) ;
+//   - paiement : montant = `item.amount` (nombre ou { expr }) ou `price` des options ;
+//   - `item.multiple: true` : grille en choix multiple, sélecteurs (membres, événements) multiples ;
+//   - CHOIX(valeur; cas1; résultat1; …; défaut) est un aiguillage (pas l'index d'Excel).
+//
 // QuestionType :
 //   short_text, long_text, email, phone, number, url, date, time, datetime,
 //   single_choice (boutons radio), multiple_choice (cases), dropdown,
