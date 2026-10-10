@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo, lazy, Suspense, useId } from
 import {
   Lock, LayoutDashboard, BarChart3, FolderTree, Network, Settings2, FileText, Loader2,
   Home, CalendarDays, PartyPopper, Wallet, IdCard, Repeat, MoreHorizontal, X, ShieldCheck,
+  ClipboardList, KanbanSquare,
 } from 'lucide-react';
 import { useStore } from './store';
 import KanbanBoard from './components/KanbanBoard';
@@ -22,6 +23,9 @@ import SyncStatusBadge from './backend/SyncStatusBadge';
 const DocumentsStudio = lazy(() => import('./components/documents/DocumentsStudio'));
 // Page publique de vérification d'un document (lien du QR code imprimé).
 const VerifyPage = lazy(() => import('./components/documents/VerifyPage'));
+// Page répondant des formulaires (#/f/<slug>), livrée par le Studio Formulaires.
+const publicFormLoader = Object.values(import.meta.glob('./forms/runtime/PublicFormPage.jsx'))[0];
+const PublicFormPage = publicFormLoader ? lazy(publicFormLoader) : null;
 
 // Écrans des modules : src/modules/<module>/Page.jsx, découverts
 // automatiquement et chargés à la demande. Un module absent n'apparaît pas.
@@ -35,6 +39,7 @@ const SECTIONS = [
   { group: 'Pilotage', items: [
     { id: 'dashboard', label: 'Accueil', short: 'Accueil', icon: Home, module: 'dashboard' },
     { id: 'calendar', label: 'Agenda', short: 'Agenda', icon: CalendarDays, module: 'calendar' },
+    { id: 'tasks', label: 'Tâches', short: 'Tâches', icon: KanbanSquare, module: 'tasks' },
   ] },
   { group: 'Équipe', items: [
     { id: 'kanban', label: 'Membres', short: 'Membres', icon: LayoutDashboard },
@@ -45,6 +50,7 @@ const SECTIONS = [
   { group: 'Activités', items: [
     { id: 'events', label: 'Événements', short: 'Événements', icon: PartyPopper, module: 'events' },
     { id: 'finance', label: 'Trésorerie', short: 'Tréso', icon: Wallet, module: 'finance' },
+    { id: 'forms', label: 'Formulaires', short: 'Formulaires', icon: ClipboardList, module: 'forms' },
   ] },
   { group: 'Outils', items: [
     { id: 'documents', label: 'Documents', short: 'Docs', icon: FileText },
@@ -56,7 +62,8 @@ const SECTIONS = [
 ];
 
 // Routes publiques, affichées hors de la coque de l'application.
-const PUBLIC_SECTIONS = new Set(['verifier']);
+// #/f/<slug> : page répondant d'un formulaire (accès public, sans la coque).
+const PUBLIC_SECTIONS = new Set(['verifier', 'f']);
 
 // Sections affichées dans la barre inférieure mobile (le reste : menu « Plus »).
 const MOBILE_PRIMARY = ['dashboard', 'kanban', 'calendar', 'documents'];
@@ -301,7 +308,15 @@ function AppShell() {
 export default function App() {
   const route = useRoute();
   // Route publique : affichée seule, sans la navigation de l'application.
-  if (PUBLIC_SECTIONS.has(route.section)) {
+  if (route.section === 'f' && PublicFormPage) {
+    return (
+      <Suspense fallback={<Loading label="Chargement du formulaire…" />}>
+        <PublicFormPage />
+        <ToastContainer />
+      </Suspense>
+    );
+  }
+  if (route.section === 'verifier') {
     return (
       <Suspense fallback={<Loading label="Chargement de la vérification…" />}>
         <VerifyPage />
