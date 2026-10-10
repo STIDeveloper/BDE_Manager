@@ -25,6 +25,9 @@ if (isPublicForm) {
     import('./App.jsx'),
     import('./components/pwa/PwaUpdatePrompt.jsx'),
   ]).then(([, { default: App }, { default: PwaUpdatePrompt }]) => {
+    // Exécuteur des automatisations : démarre avec l'application (sinon
+    // seulement à l'ouverture de l'écran Automatisations).
+    import('./automations/runner.js').then(m => m.startAutomationRunner?.()).catch(err => console.error('[automatisations]', err));
     root.render(
       <React.StrictMode>
         <App />

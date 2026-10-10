@@ -268,6 +268,23 @@ export const useRolesStore = create(
         }, 50);
       },
 
+      /**
+       * Ajoute ou met à jour un candidat (par id) — utilisé par les
+       * automatisations (candidature reçue via un formulaire). Recalcul ensuite.
+       */
+      upsertCandidate: (candidate) => {
+        if (!candidate?.id) throw new Error('Candidat sans identifiant.');
+        set(state => {
+          const i = state.candidates.findIndex(c => c.id === candidate.id);
+          const candidates = i === -1
+            ? [...state.candidates, candidate]
+            : state.candidates.map((c, j) => (j === i ? { ...c, ...candidate } : c));
+          return { candidates, importedAt: state.importedAt || new Date().toISOString() };
+        });
+        get().recompute();
+        return get().candidates.find(c => c.id === candidate.id);
+      },
+
       clearAll: () => {
         set({
           candidates: [], importReport: null, importedAt: null, rawCsvHash: null,

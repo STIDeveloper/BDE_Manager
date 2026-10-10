@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo, lazy, Suspense, useId } from
 import {
   Lock, LayoutDashboard, BarChart3, FolderTree, Network, Settings2, FileText, Loader2,
   Home, CalendarDays, PartyPopper, Wallet, IdCard, Repeat, MoreHorizontal, X, ShieldCheck,
-  ClipboardList, KanbanSquare,
+  ClipboardList, KanbanSquare, Workflow,
 } from 'lucide-react';
 import { useStore } from './store';
 import KanbanBoard from './components/KanbanBoard';
@@ -18,6 +18,7 @@ import ConfirmHost from './components/ui/ConfirmHost';
 import RolesManager from './components/roles/manager/RolesManager';
 import { navigate, useRoute } from './core/router';
 import SyncStatusBadge from './backend/SyncStatusBadge';
+import NotificationBell from './automations/NotificationBell';
 
 // Studio documents chargé à la demande (modèles + moteurs de rendu).
 const DocumentsStudio = lazy(() => import('./components/documents/DocumentsStudio'));
@@ -57,6 +58,7 @@ const SECTIONS = [
     { id: 'drive', label: 'Drive', short: 'Drive', icon: FolderTree },
     { id: 'stats', label: 'Statistiques', short: 'Stats', icon: BarChart3 },
     { id: 'sensitive', label: 'Coffre-fort', short: 'Coffre', icon: Lock },
+    { id: 'automations', label: 'Automatisations', short: 'Autom.', icon: Workflow, module: 'automations' },
     { id: 'team', label: 'Équipe & accès', short: 'Accès', icon: ShieldCheck, module: 'team' },
   ] },
 ];
@@ -163,6 +165,7 @@ function AppShell() {
               <Settings2 size={16} aria-hidden="true" />
             </button>
             <SyncStatusBadge />
+            <NotificationBell />
             <UndoButtons />
             {/* Sur mobile, sauvegarde / thème / rôles sont dans le menu « Plus ». */}
             <div className="hidden sm:flex items-center gap-1">
