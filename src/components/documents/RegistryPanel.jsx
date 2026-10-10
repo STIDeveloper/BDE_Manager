@@ -1,9 +1,10 @@
 import { useId, useMemo, useState } from 'react';
 import {
-  BadgeCheck, CalendarDays, Copy, Download, FileStack, Fingerprint, Layers, RefreshCw, Search, ShieldAlert, ShieldCheck,
+  BadgeCheck, CalendarDays, Copy, Download, FileSignature, FileStack, Fingerprint, Layers, Mail, PenLine, RefreshCw, Search, ShieldAlert, ShieldCheck,
   ShieldQuestion, Trash2,
 } from 'lucide-react';
 import { DOCUMENT_CATEGORIES } from '../../documents/model';
+import { navigate } from '../../core/router';
 import { confirmDialog } from '../ui/confirmStore';
 import { toast } from '../ui/toastStore';
 import { TemplateIcon, toneFor } from './templateIcons';
@@ -16,11 +17,37 @@ import {
 const PAGE = 50;
 const categoryLabel = (id) => DOCUMENT_CATEGORIES.find(c => c.id === id)?.label || id;
 
+// Modules émetteurs (origin.type === 'module', via documents/issue.js).
+const MODULE_LABELS = {
+  events: 'Événements', membership: 'Adhésions', handover: 'Passations', finance: 'Trésorerie',
+  calendar: 'Agenda', team: 'Équipe & accès', dashboard: 'Accueil',
+};
+
+/** Badge « Émis depuis … » (lien vers l'élément source si possible). */
+function OriginBadge({ origin }) {
+  if (!origin || typeof origin !== 'object') return null;
+  if (origin.type === 'pack') {
+    return <span className="badge badge-neutral">Dossier annuel {origin.year}{origin.ref ? ` · ${origin.ref}` : ''}</span>;
+  }
+  if (origin.type !== 'module' || !origin.module) return null;
+  const label = MODULE_LABELS[origin.module] || origin.module;
+  return (
+    <button type="button" onClick={() => (origin.id ? navigate(origin.module, origin.id) : navigate(origin.module))}
+      title={`Ouvrir l'élément source (${label})`}
+      className="badge badge-brand hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60">
+      Émis depuis {label}
+    </button>
+  );
+}
+
 /**
  * Registre chronologique des documents émis : recherche, filtres, export CSV,
  * vérification d'authenticité, régénération, suppression.
  */
-export default function RegistryPanel({ documentLog, templates, getTemplate, membersById, onRegenerate, onRemove }) {
+export default function RegistryPanel({
+  documentLog, templates, getTemplate, membersById, onRegenerate, onRemove,
+  signatures = {}, canWrite = true, onSend, onSign, onDownloadSigned,
+}) {
   const uid = useId();
   const [query, setQuery] = useState('');
   const [templateId, setTemplateId] = useState('');
@@ -183,12 +210,12 @@ export default function RegistryPanel({ documentLog, templates, getTemplate, mem
                         </button>
                       </td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-xs text-dim tabular-nums">{formatDateTime(e.createdAt)}</td>
-                      <td className="px-3 py-2.5 min-w-[200px]"><DocCell entry={e} template={t} /></td>
+                      <td className="px-3 py-2.5 min-w-[200px]"><DocCell entry={e} template={t} signature={signatures[e.id]} /></td>
                       <td className="px-3 py-2.5 text-xs text-dim max-w-[220px]"><MembersCell ids={e.memberIds} membersById={membersById} /></td>
                       <td className="px-3 py-2.5 font-mono text-[11px] text-dim whitespace-nowrap">{e.fingerprint || '—'}</td>
                       <td className="px-3 py-2.5"><span className="badge badge-neutral">{formatLabel(e.format)}</span></td>
                       <td className="px-3 py-2.5">
-                        <RowActions entry={e} template={t} onRegenerate={onRegenerate} onRemove={remove} />
+                        <RowActions entry={e} template={t} onRegenerate={onRegenerate} onRemove={remove} signature={signatures[e.id]} canWrite={canWrite} onSend={onSend} onSign={onSign} onDownloadSigned={onDownloadSigned} />
                       </td>
                     </tr>
                   );
@@ -209,13 +236,13 @@ export default function RegistryPanel({ documentLog, templates, getTemplate, mem
                     </button>
                     <span className="text-[11px] text-dim tabular-nums">{formatDateTime(e.createdAt)}</span>
                   </div>
-                  <DocCell entry={e} template={t} />
+                  <DocCell entry={e} template={t} signature={signatures[e.id]} />
                   <div className="text-xs text-dim"><MembersCell ids={e.memberIds} membersById={membersById} /></div>
                   <div className="flex items-center gap-2 text-[11px] text-dim">
                     <Fingerprint size={12} aria-hidden="true" /> <span className="font-mono">{e.fingerprint || '—'}</span>
                     <span className="badge badge-neutral ml-auto">{formatLabel(e.format)}</span>
                   </div>
-                  <RowActions entry={e} template={t} onRegenerate={onRegenerate} onRemove={remove} full />
+                  <RowActions entry={e} template={t} onRegenerate={onRegenerate} onRemove={remove} signature={signatures[e.id]} canWrite={canWrite} onSend={onSend} onSign={onSign} onDownloadSigned={onDownloadSigned} full />
                 </li>
               );
             })}
@@ -246,13 +273,19 @@ function Stat({ icon: I, label, value, tone, small }) {
   );
 }
 
-function DocCell({ entry, template }) {
+function DocCell({ entry, template, signature }) {
   return (
     <div className="flex items-start gap-2 min-w-0">
       {template && <span className={`h-6 w-6 rounded-lg grid place-items-center shrink-0 ${toneFor(template.category).tile}`} aria-hidden="true"><TemplateIcon name={template.icon} size={12} /></span>}
       <div className="min-w-0">
         <p className="text-sm text-ink font-medium leading-snug break-words">{entry.title || template?.title || 'Document'}</p>
         <p className="text-[11px] text-dim">{template ? `${template.title} · ${categoryLabel(template.category)}` : `Modèle « ${entry.templateId} » indisponible`}</p>
+        {entry.origin && <div className="mt-0.5"><OriginBadge origin={entry.origin} /></div>}
+        {signature && (
+          <p className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+            <PenLine size={11} aria-hidden="true" /> Signé le {formatDateTime(signature.signedAt)}{signature.signerName ? ` par ${signature.signerName}` : ''}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -265,18 +298,39 @@ function MembersCell({ ids, membersById }) {
   return <span title={names.join(', ')}>{shown}{names.length > 3 ? ` +${names.length - 3}` : ''}</span>;
 }
 
-function RowActions({ entry, template, onRegenerate, onRemove, full }) {
+function RowActions({ entry, template, onRegenerate, onRemove, full, signature, canWrite, onSend, onSign, onDownloadSigned }) {
+  const nominative = (entry.memberIds || []).length > 0;
   return (
-    <div className={`flex items-center gap-1 ${full ? '' : 'justify-end'}`}>
+    <div className={`flex flex-wrap items-center gap-1 ${full ? '' : 'justify-end'}`}>
+      {onSend && (
+        <button type="button" onClick={() => onSend(entry)} aria-label={`Envoyer ${entry.ref} par email`} title="Envoyer par email"
+          className="tap btn-ghost p-1.5">
+          <Mail size={14} aria-hidden="true" />
+        </button>
+      )}
+      {onSign && canWrite && nominative && template && (
+        <button type="button" onClick={() => onSign(entry)} aria-label={`Faire signer ${entry.ref}`} title={signature ? 'Faire signer à nouveau' : 'Faire signer sur cet appareil'}
+          className="tap btn-ghost p-1.5">
+          <FileSignature size={14} aria-hidden="true" />
+        </button>
+      )}
+      {signature && onDownloadSigned && (
+        <button type="button" onClick={() => onDownloadSigned(entry)} aria-label={`Télécharger le PDF signé de ${entry.ref}`} title="PDF signé"
+          className="tap btn-ghost p-1.5 text-emerald-600 dark:text-emerald-400">
+          <Download size={14} aria-hidden="true" />
+        </button>
+      )}
       <button type="button" onClick={() => onRegenerate(entry)} disabled={!template}
         title={template ? 'Rouvrir le générateur avec les mêmes valeurs' : 'Modèle indisponible'}
         className={`btn-secondary py-1 px-2 text-xs ${full ? 'flex-1' : ''}`}>
         <RefreshCw size={13} aria-hidden="true" /> Régénérer
       </button>
-      <button type="button" onClick={() => onRemove(entry)} aria-label={`Supprimer ${entry.ref} du registre`} title="Supprimer du registre"
-        className="tap btn-ghost p-1.5 hover:!text-red-500">
-        <Trash2 size={14} aria-hidden="true" />
-      </button>
+      {canWrite && (
+        <button type="button" onClick={() => onRemove(entry)} aria-label={`Supprimer ${entry.ref} du registre`} title="Supprimer du registre"
+          className="tap btn-ghost p-1.5 hover:!text-red-500">
+          <Trash2 size={14} aria-hidden="true" />
+        </button>
+      )}
     </div>
   );
 }

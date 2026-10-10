@@ -1,6 +1,6 @@
 import { useId, useMemo, useRef, useState } from 'react';
 import {
-  ArrowRight, Clock, FileText, Handshake, Landmark, LayoutGrid, Network, Scale, Search, ShieldCheck, TriangleAlert, Users, X,
+  ArrowRight, Clock, FileText, Handshake, Landmark, LayoutGrid, Network, Pencil, Scale, Search, ShieldCheck, Sparkles, TriangleAlert, Users, WandSparkles, X,
 } from 'lucide-react';
 import { DOCUMENT_CATEGORIES } from '../../documents/model';
 import { TemplateIcon, toneFor } from './templateIcons';
@@ -20,7 +20,7 @@ function missingProfile(template, organization) {
  * Galerie des modèles : recherche, catégories, récents.
  * @param {{ templates: object[], organization: object, documentLog: object[], onOpen: (t:object)=>void }} props
  */
-export default function TemplateGallery({ templates, organization, documentLog, onOpen }) {
+export default function TemplateGallery({ templates, organization, documentLog, onOpen, onCustomize, onEditCustom }) {
   const searchId = useId();
   const searchRef = useRef(null);
   const [query, setQuery] = useState('');
@@ -125,7 +125,7 @@ export default function TemplateGallery({ templates, organization, documentLog, 
         filtered.length ? (
           <>
             <p className="text-xs text-dim" aria-live="polite">{filtered.length} modèle{filtered.length > 1 ? 's' : ''}</p>
-            <CardGrid templates={filtered} organization={organization} onOpen={onOpen} />
+            <CardGrid templates={filtered} organization={organization} onOpen={onOpen} onCustomize={onCustomize} onEditCustom={onEditCustom} />
           </>
         ) : (
           <div className="rounded-2xl border border-dashed border-line p-8 text-center" aria-live="polite">
@@ -148,7 +148,7 @@ export default function TemplateGallery({ templates, organization, documentLog, 
                   <p className="text-xs text-dim truncate">{c.description}</p>
                 </div>
               </div>
-              <CardGrid templates={list} organization={organization} onOpen={onOpen} />
+              <CardGrid templates={list} organization={organization} onOpen={onOpen} onCustomize={onCustomize} onEditCustom={onEditCustom} />
             </section>
           );
         })
@@ -157,15 +157,31 @@ export default function TemplateGallery({ templates, organization, documentLog, 
   );
 }
 
-function CardGrid({ templates, organization, onOpen }) {
+function CardGrid({ templates, organization, onOpen, onCustomize, onEditCustom }) {
   return (
     <ul className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-      {templates.map(t => <li key={t.id} className="flex"><TemplateCard template={t} organization={organization} onOpen={onOpen} /></li>)}
+      {templates.map(t => (
+        <li key={t.id} className="relative flex">
+          <TemplateCard template={t} organization={organization} onOpen={onOpen} hasAction={t.custom ? !!onEditCustom : !!onCustomize} />
+          {t.custom && onEditCustom && (
+            <button type="button" onClick={() => onEditCustom(t)} aria-label={`Modifier le modèle ${t.title}`}
+              className="absolute right-2.5 top-2.5 inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-1 text-[11px] font-medium text-dim hover:text-ink hover:border-line-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60">
+              <Pencil size={11} aria-hidden="true" /> Modifier
+            </button>
+          )}
+          {!t.custom && onCustomize && (
+            <button type="button" onClick={() => onCustomize(t)} aria-label={`Personnaliser une copie du modèle ${t.title}`}
+              className="absolute right-2.5 top-2.5 inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-1 text-[11px] font-medium text-dim hover:text-ink hover:border-line-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60">
+              <WandSparkles size={11} aria-hidden="true" /> Personnaliser
+            </button>
+          )}
+        </li>
+      ))}
     </ul>
   );
 }
 
-function TemplateCard({ template: t, organization, onOpen }) {
+function TemplateCard({ template: t, organization, onOpen, hasAction }) {
   const tone = toneFor(t.category);
   const missing = missingProfile(t, organization);
   const legal = t.legal?.references?.length > 0;
@@ -173,7 +189,7 @@ function TemplateCard({ template: t, organization, onOpen }) {
     <button
       type="button"
       onClick={() => onOpen(t)}
-      className="group relative w-full text-left flex flex-col rounded-2xl border border-line bg-surface p-4 overflow-hidden transition-all hover:border-line-strong hover:shadow-[var(--shadow-lg)] hover:-translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+      className={`group relative w-full text-left flex flex-col rounded-2xl border border-line bg-surface p-4 overflow-hidden transition-all hover:border-line-strong hover:shadow-[var(--shadow-lg)] hover:-translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 ${hasAction ? 'pt-10' : ''}`}
     >
       <span className={`absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r ${tone.bar} to-transparent opacity-70`} aria-hidden="true" />
       <span className="flex items-start gap-3">
@@ -185,6 +201,7 @@ function TemplateCard({ template: t, organization, onOpen }) {
       </span>
       <span className="mt-auto pt-3 flex flex-wrap items-center gap-1.5">
         <span className={`badge ${t.scope === 'member' ? 'badge-brand' : 'badge-violet'}`}>{t.scope === 'member' ? 'Par membre' : 'Association'}</span>
+        {t.custom && <span className="badge badge-amber"><Sparkles size={10} aria-hidden="true" /> Personnalisé</span>}
         {legal && <span className="badge badge-emerald"><Scale size={10} aria-hidden="true" /> Légal</span>}
         {missing.length > 0 && (
           <span className="badge badge-amber" title={`Profil à compléter : ${missing.join(', ')}`}>

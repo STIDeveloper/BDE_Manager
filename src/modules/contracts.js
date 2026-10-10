@@ -29,7 +29,8 @@
 //   paidAt?, method?, transactionId?, receiptRef? (registre documents),
 //   reminders: [{ at, channel: 'email'|'manuel' }], source?: 'manuel'|'helloasso'|'formulaire',
 //   createdAt, updatedAt } }
-// settings: { defaultAmount, reducedAmount, campaignYear, reminderTemplate }
+// settings: { defaultAmount, reducedAmount, campaignYear, reminderTemplate,
+//             dueDate? ('AAAA-MM-JJ' : date limite de paiement de la campagne, lue par l'agenda) }
 //
 // ── events (useEventsStore, src/modules/events/store.js) ──
 // events: { [id]: {
@@ -45,8 +46,11 @@
 //
 // ── calendar (useCalendarStore, src/modules/calendar/store.js) ──
 // reminders: { [id]: { id, title, date, time?, notes?, recurrence: 'none'|'weekly'|'monthly'|'yearly',
-//                       category: 'conformite'|'finance'|'equipe'|'evenement'|'autre', done, doneAt? } }
-// settings: { notifications: boolean, lastNotifiedAt? }
+//                       category: 'conformite'|'finance'|'equipe'|'evenement'|'autre', done, doneAt?,
+//                       doneDates?: string[] /* occurrences faites d'un rappel récurrent */ } }
+// settings: { notifications: boolean, lastNotifiedAt?, agDate?, agIntervalMonths?,
+//             insuranceRenewal?, insuranceLabel?, dirigeantsChange? }
+// Composant réutilisable : src/modules/calendar/UpcomingWidget.jsx ({ limit }).
 // + éléments CALCULÉS (non stockés) : événements, fins de mandat, AG annuelle,
 //   déclaration des dirigeants (3 mois), échéances de cotisation, rappels.
 //   → getAgendaItems(ctx) dans src/modules/calendar/agenda.js.
@@ -54,7 +58,8 @@
 // ── handover (useHandoverStore, src/modules/handover/store.js) ──
 // handovers: { [id]: { id, outgoingId, successorId?, roleId, status: 'draft'|'in_progress'|'done',
 //                       steps: { [stepId]: { done, at?, note? } }, documentRefs: string[],
-//                       startedAt, completedAt?, createdAt, updatedAt } }
+//                       startedAt, completedAt?, createdAt, updatedAt,
+//                       handoverDate?, exitMode?, driveSnapshot?, vaultChecks?, finalChecks?, notes? } }
 //
 // ── documents avancés (store principal + useDocumentsExtraStore) ──
 // customTemplates: { [id]: CustomTemplate }   (modèles personnalisés no-code)

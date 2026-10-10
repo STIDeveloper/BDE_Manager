@@ -18,6 +18,8 @@ import {
   referenceLine, stampSlotIndex, safeHex, hexToRgb, str,
 } from './shared.js';
 import { safeFileName } from '../model.js';
+import { qrMatrix, qrRuns } from '../qr.js';
+import { verificationUrl } from '../verification.js';
 
 const PT = 25.4 / 72;            // 1 pt en mm
 const MARGIN_X = 18;
@@ -97,7 +99,7 @@ async function prepareImages(docs, org, imageSize) {
 // Moteur
 // ------------------------------------------------------------
 
-function createWriter(pdf, autoTable, doc, org, images) {
+function createWriter(pdf, autoTable, doc, org, images, issue = null) {
   const page = pageSizeOf(doc);
   const orientation = page.landscape ? 'landscape' : 'portrait';
   const contentW = page.width - 2 * MARGIN_X;
@@ -745,17 +747,31 @@ function createWriter(pdf, autoTable, doc, org, images) {
   }
 
   // --- Pied de page et en-tête de continuation (seconde passe) --------
+  // QR code de vérification (document émis) : à droite du pied de page.
+  const QR = (() => {
+    if (!issue?.ref || !issue?.fingerprint) return null;
+    try {
+      const matrix = qrMatrix(verificationUrl(issue.ref, issue.fingerprint));
+      return { matrix, runs: qrRuns(matrix), size: 15 };
+    } catch (_e) { return null; }
+  })();
+  const qrSpace = QR ? QR.size + 3 : 0;
+
   function footerLayout() {
+    const textW = contentW - 2 * qrSpace;
     setFont('normal', 7);
-    const id = pdf.splitTextToSize(pdfSafeText(footerIdentity(org)), contentW);
+    const id = pdf.splitTextToSize(pdfSafeText(footerIdentity(org)), textW);
     setFont('italic', 7);
-    const note = org.footerNote ? pdf.splitTextToSize(pdfSafeText(org.footerNote), contentW) : [];
+    const note = org.footerNote ? pdf.splitTextToSize(pdfSafeText(org.footerNote), textW) : [];
     const step = 3.1;
     const metaY = page.height - 9;
     const firstId = metaY - 3.6 - (id.length - 1) * step;
     const firstNote = firstId - note.length * step;
-    const ruleY = firstNote - 3.6;
-    return { id, note, step, metaY, firstId, firstNote, ruleY };
+    let ruleY = firstNote - 3.6;
+    // Le QR (bas aligné sur la ligne de référence) reste sous le filet.
+    const qrTop = QR ? metaY + 1.2 - QR.size : null;
+    if (QR) ruleY = Math.min(ruleY, qrTop - 2);
+    return { id, note, step, metaY, firstId, firstNote, ruleY, qrTop };
   }
   const FOOT = footerLayout();
   W.bottom = Math.min(page.height - 24, FOOT.ruleY - 4);
@@ -771,14 +787,27 @@ function createWriter(pdf, autoTable, doc, org, images) {
     F.id.forEach((l, i) => pdf.text(l, page.width / 2, F.firstId + i * F.step, { align: 'center' }));
     pdf.text(pdfSafeText(referenceLine(issue)), MARGIN_X, F.metaY);
     const pageLabel = `Page ${n} / ${total}`;
-    pdf.text(pageLabel, page.width - MARGIN_X, F.metaY, { align: 'right' });
+    const rightX = page.width - MARGIN_X - qrSpace;
+    pdf.text(pageLabel, rightX, F.metaY, { align: 'right' });
     if (doc?.meta?.confidential) {
       // Juste à gauche de la pagination : ne chevauche jamais la référence.
       const label = 'CONFIDENTIEL';
       setFont('bold', 7, CONFIDENTIAL_RED);
-      const x = page.width - MARGIN_X - measure(pdf, pageLabel, 'normal', 7) - 6;
+      const x = rightX - measure(pdf, pageLabel, 'normal', 7) - 6;
       pdf.text(label, x, F.metaY, { align: 'right' });
     }
+    if (QR) drawQr(page.width - MARGIN_X - QR.size, F.qrTop);
+  }
+
+  /** QR code vectoriel (rectangles fusionnés par ligne) + légende. */
+  function drawQr(x, y) {
+    const unit = QR.size / QR.matrix.size;
+    pdf.setFillColor(255, 255, 255);
+    pdf.rect(x - 0.8, y - 0.8, QR.size + 1.6, QR.size + 1.6, 'F');
+    pdf.setFillColor(0, 0, 0);
+    QR.runs.forEach(r => pdf.rect(x + r.x * unit, y + r.y * unit, r.w * unit + 0.01, unit + 0.01, 'F'));
+    setFont('normal', 5.5, FAINT);
+    pdf.text('Scanner pour vérifier', x + QR.size / 2, y + QR.size + 2.6, { align: 'center' });
   }
 
   function drawContinuationHeader() {
@@ -858,7 +887,7 @@ export async function renderDocumentsToPdf(docs, { organization = {}, issues = [
 
   const ranges = [];
   list.forEach((doc, i) => {
-    const writer = createWriter(pdf, autoTable, doc, org, images);
+    const writer = createWriter(pdf, autoTable, doc, org, images, issues[i] || null);
     currentOrientation = writer.orientation;
     if (i > 0) pdf.addPage('a4', writer.orientation);
     const start = pdf.getNumberOfPages();

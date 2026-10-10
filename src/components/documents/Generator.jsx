@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { reserveDocumentRefsAuto } from '../../backend/documentRefs';
 import {
-  AlertTriangle, ArrowLeft, BookOpen, Building2, CheckCircle2, ChevronRight, Eye, History, Info, Lightbulb, Scale, SquarePen,
+  AlertTriangle, ArrowLeft, BookOpen, Building2, CheckCircle2, ChevronRight, Eye, History, Info, Lightbulb, Mail, Scale, SquarePen,
 } from 'lucide-react';
 import { useStore } from '../../store';
 import { useCatalog } from '../../core/useCatalog';
@@ -21,6 +22,8 @@ import {
   defaultDependsOnMember, defaultMemberSelection, generationValues, memberName, sortMembers,
 } from './studioHelpers';
 import { buildIssues, buildLogEntries, docKey, exportBaseName, refRange } from './registryHelpers';
+import { useTemplates } from '../../documents/useTemplates';
+import SendDialog from './SendDialog';
 
 /** Valeur « retardée » : l'aperçu n'est régénéré qu'après une pause de frappe. */
 function useDebouncedValue(value, delay) {
@@ -42,6 +45,7 @@ const DISCLAIMER = 'Modèles fournis à titre indicatif. Pour les actes engagean
  *   onClose: ()=>void, onOpenProfile: (field?:string)=>void, onShowRegistry: ()=>void }} props
  */
 export default function Generator(props) {
+  useTemplates(); // modèles personnalisés : rendu à jour s'ils changent
   const template = getTemplate(props.session.templateId);
   if (!template) {
     return (
@@ -62,7 +66,6 @@ function GeneratorBody({ session, ctx, template, onClose, onOpenProfile, onShowR
   const uid = useId();
   const catalog = useCatalog();
   const columns = useStore(s => s.columns);
-  const reserveDocumentRefs = useStore(s => s.reserveDocumentRefs);
   const logDocuments = useStore(s => s.logDocuments);
   const isMemberScope = template.scope === 'member';
   const members = useMemo(() => sortMembers(ctx.members), [ctx.members]);
@@ -87,6 +90,7 @@ function GeneratorBody({ session, ctx, template, onClose, onOpenProfile, onShowR
   const [draft, setDraft] = useState(false);
   const [busy, setBusy] = useState(null);
   const [lastIssue, setLastIssue] = useState(null);
+  const [sending, setSending] = useState(false);
 
   const suggestedIds = useMemo(
     () => (isMemberScope && typeof template.memberFilter === 'function' ? defaultMemberSelection(template, ctx) : null),
@@ -213,7 +217,8 @@ function GeneratorBody({ session, ctx, template, onClose, onOpenProfile, onShowR
       let issues = finalDocs.map(() => ({ ref: 'BROUILLON (non émis)', fingerprint: '', issuedAt: null }));
       if (!draft) {
         const fingerprints = await Promise.all(finalDocs.map(d => documentFingerprint(d)));
-        refs = reserveDocumentRefs(finalDocs.length);
+        // Numéros réservés côté serveur si un espace collaboratif est connecté.
+        refs = await reserveDocumentRefsAuto(finalDocs.length);
         issues = buildIssues(refs, fingerprints);
       }
       const base = safeFileName(exportBaseName(finalDocs, draft ? null : issues, template.title, draft));
@@ -225,10 +230,10 @@ function GeneratorBody({ session, ctx, template, onClose, onOpenProfile, onShowR
       if (draft) {
         toast.info('Brouillon exporté', 'Non numéroté et non inscrit au registre.');
       } else {
-        logDocuments(buildLogEntries(finalDocs, issues, { templateId: template.id, values: genValues, format, fileName: base }));
+        const entries = logDocuments(buildLogEntries(finalDocs, issues, { templateId: template.id, values: genValues, format, fileName: base }));
         const n = finalDocs.length;
         toast.success(n > 1 ? `${n} documents émis` : 'Document émis', refRange(refs));
-        setLastIssue({ refs, format, at: new Date() });
+        setLastIssue({ refs, format, at: new Date(), entries: Array.isArray(entries) ? entries : [] });
       }
     } catch (e) {
       console.error('[Documents] export', e);
@@ -385,7 +390,12 @@ function GeneratorBody({ session, ctx, template, onClose, onOpenProfile, onShowR
             <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-line bg-emerald-500/[0.07] text-xs" role="status">
               <CheckCircle2 size={14} className="text-emerald-500" aria-hidden="true" />
               <span className="text-ink">Émis : <strong className="font-mono">{refRange(lastIssue.refs)}</strong></span>
-              <button type="button" onClick={onShowRegistry} className="ml-auto text-blue-600 dark:text-blue-400 hover:underline rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60">
+              {lastIssue.entries?.length > 0 && (
+                <button type="button" onClick={() => setSending(true)} className="ml-auto inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60">
+                  <Mail size={13} aria-hidden="true" /> Envoyer par email
+                </button>
+              )}
+              <button type="button" onClick={onShowRegistry} className={`${lastIssue.entries?.length ? '' : 'ml-auto '}text-blue-600 dark:text-blue-400 hover:underline rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60`}>
                 Voir le registre
               </button>
             </div>
@@ -410,6 +420,7 @@ function GeneratorBody({ session, ctx, template, onClose, onOpenProfile, onShowR
           </div>
         </section>
       </div>
+      {sending && lastIssue?.entries?.length > 0 && <SendDialog entries={lastIssue.entries} onClose={() => setSending(false)} />}
     </div>
   );
 }

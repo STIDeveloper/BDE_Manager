@@ -19,6 +19,7 @@ import { buildContext } from './context.js';
 import { getTemplate, generateDocuments, missingRequirements, defaultValues } from './registry.js';
 import { documentFingerprint, validateDocument, safeFileName } from './model.js';
 import { buildIssues, buildLogEntries, exportBaseName } from '../components/documents/registryHelpers.js';
+import { reserveDocumentRefsAuto } from '../backend/documentRefs.js';
 
 export async function issueDocuments({
   templateId, memberIds = [], values = {}, editedKeys, format = 'pdf', extraContext = {}, draft = false, origin,
@@ -43,7 +44,8 @@ export async function issueDocuments({
   let refs = [];
   if (!draft) {
     const fingerprints = await Promise.all(docs.map(d => documentFingerprint(d)));
-    refs = state.reserveDocumentRefs(docs.length);
+    // Numéros réservés côté serveur si un espace collaboratif est connecté.
+    refs = await reserveDocumentRefsAuto(docs.length);
     issues = buildIssues(refs, fingerprints);
   }
   const fileName = safeFileName(exportBaseName(docs, draft ? null : issues, template.title, draft));

@@ -1,6 +1,28 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import { readFileSync } from 'node:fs';
+
+/*
+ * En-têtes de sécurité de `vite preview` : repris de vercel.json (source
+ * unique) pour tester localement la même CSP qu'en production (dont
+ * connect-src vers Supabase). Seules différences, propres au HTTP local :
+ * pas de HSTS ni de `upgrade-insecure-requests` (sinon http://localhost
+ * serait réécrit en https et la prévisualisation ne chargerait plus).
+ */
+function previewHeaders() {
+  try {
+    const vercel = JSON.parse(readFileSync(new URL('./vercel.json', import.meta.url), 'utf8'));
+    const global = vercel.headers?.find((h) => h.source === '/(.*)')?.headers ?? [];
+    return Object.fromEntries(global
+      .filter((h) => h.key !== 'Strict-Transport-Security')
+      .map((h) => [h.key, h.key === 'Content-Security-Policy'
+        ? h.value.split(';').map((d) => d.trim()).filter((d) => d && d !== 'upgrade-insecure-requests').join('; ')
+        : h.value]));
+  } catch {
+    return {};
+  }
+}
 
 /*
  * Chunks « lourds » chargés à la demande (mermaid et tout ce qu'il tire : d3, katex,
@@ -128,5 +150,8 @@ export default defineConfig({
   server: {
     port: 5173,
     open: true,
+  },
+  preview: {
+    headers: previewHeaders(),
   },
 });

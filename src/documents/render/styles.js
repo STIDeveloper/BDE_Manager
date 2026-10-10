@@ -141,6 +141,9 @@ ol.doc-list{list-style:decimal outside;}
 .doc-footer-ref{text-align:left !important;width:52%;}
 .doc-footer-conf{width:14%;white-space:nowrap;text-align:center !important;font-weight:700;letter-spacing:.12em;color:#a12d2d !important;}
 .doc-footer-page{text-align:right !important;width:34%;}
+.doc-footer-qr{width:17mm;text-align:right !important;vertical-align:bottom;padding-left:2mm;}
+.doc-qr{width:15mm;height:15mm;display:inline-block;image-rendering:pixelated;}
+.doc-qr-caption{font-size:5.8pt;color:#6b6f77;text-align:right;letter-spacing:.04em;}
 ${forWord ? wordCss() : screenAndPrintCss()}
 `;
 }

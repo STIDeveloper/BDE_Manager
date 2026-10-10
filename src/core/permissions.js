@@ -6,7 +6,11 @@
 // sont CONTRÔLÉS CÔTÉ SERVEUR (politiques RLS Postgres, voir supabase/).
 //
 // Mode local (aucun backend configuré) : l'utilisateur de l'appareil a tous
-// les droits. Le module backend remplace la source via setPermissionSource().
+// les droits. Le module backend remplace la source via setPermissionSource() :
+//   { mode: 'remote', grants: { [capability]: level }, user: { id, email, role, memberId } }
+// où `grants` provient de la RPC my_grants (src/backend/engine.js). En mode
+// « remote », une capacité absente vaut 'none' et des droits pas encore
+// chargés (grants null) n'accordent RIEN (refus par défaut).
 //
 // Capacités (familles) : members, catalog, drive, documents, organization,
 //   vault, recruitment, finance, membership, events, calendar, handover, admin
@@ -47,8 +51,20 @@ export const getPermissionSource = () => source;
 
 /** Vérification non réactive (gestionnaires d'événements, stores). */
 export function can(capability, level = 'write') {
-  if (source.mode === 'local' || !source.grants) return true;
-  return rank(source.grants[capability] || 'none') >= rank(level);
+  return evaluate(source, capability, level);
+}
+
+/** Règle commune à can() et useCan(). */
+function evaluate(src, capability, level) {
+  if (src.mode !== 'remote') return true;
+  if (!src.grants) return false;
+  return rank(src.grants[capability] || 'none') >= rank(level);
+}
+
+/** Niveau effectif d'une capacité ('manage' en mode local). */
+export function levelOf(capability) {
+  if (source.mode !== 'remote') return 'manage';
+  return source.grants?.[capability] || 'none';
 }
 
 const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
@@ -56,8 +72,7 @@ const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn)
 /** Hook réactif : true si l'utilisateur courant a au moins ce niveau. */
 export function useCan(capability, level = 'write') {
   const src = useSyncExternalStore(subscribe, getPermissionSource, getPermissionSource);
-  if (src.mode === 'local' || !src.grants) return true;
-  return rank(src.grants[capability] || 'none') >= rank(level);
+  return evaluate(src, capability, level);
 }
 
 export function usePermissionSource() {

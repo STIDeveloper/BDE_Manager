@@ -16,9 +16,12 @@ import { ToastContainer } from './components/ui/Toast';
 import ConfirmHost from './components/ui/ConfirmHost';
 import RolesManager from './components/roles/manager/RolesManager';
 import { navigate, useRoute } from './core/router';
+import SyncStatusBadge from './backend/SyncStatusBadge';
 
 // Studio documents chargé à la demande (modèles + moteurs de rendu).
 const DocumentsStudio = lazy(() => import('./components/documents/DocumentsStudio'));
+// Page publique de vérification d'un document (lien du QR code imprimé).
+const VerifyPage = lazy(() => import('./components/documents/VerifyPage'));
 
 // Écrans des modules : src/modules/<module>/Page.jsx, découverts
 // automatiquement et chargés à la demande. Un module absent n'apparaît pas.
@@ -63,7 +66,7 @@ function Loading({ label = 'Chargement…' }) {
   );
 }
 
-export default function App() {
+function AppShell() {
   const theme = useStore(s => s.theme);
   const [rolesManagerOpen, setRolesManagerOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -137,19 +140,23 @@ export default function App() {
             <span className="sr-only"> — {active.label}</span>
           </h1>
 
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-1 shrink-0 min-w-0">
             <button
               type="button"
               onClick={() => setRolesManagerOpen(true)}
               aria-label="Gestion des rôles, pôles et niveaux"
               title="Gestion des rôles (pôles, niveaux, capacités)"
-              className="bg-elevated hover:bg-line border border-line text-ink p-2 rounded-xl transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+              className="hidden sm:inline-flex bg-elevated hover:bg-line border border-line text-ink p-2 rounded-xl transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
             >
               <Settings2 size={16} aria-hidden="true" />
             </button>
+            <SyncStatusBadge />
             <UndoButtons />
-            <BackupButtons />
-            <ThemeToggle />
+            {/* Sur mobile, sauvegarde / thème / rôles sont dans le menu « Plus ». */}
+            <div className="hidden sm:flex items-center gap-1">
+              <BackupButtons />
+              <ThemeToggle />
+            </div>
           </div>
         </div>
       </header>
@@ -243,6 +250,17 @@ export default function App() {
                 <X size={18} aria-hidden="true" />
               </button>
             </div>
+            <div className="mb-4 rounded-xl border border-line bg-elevated/60 p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted mb-2">Outils</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => { setMoreOpen(false); setRolesManagerOpen(true); }}
+                  className="inline-flex items-center gap-1.5 bg-surface border border-line text-ink text-xs font-medium px-3 py-2 rounded-xl">
+                  <Settings2 size={14} aria-hidden="true" /> Gestion des rôles
+                </button>
+                <BackupButtons />
+                <ThemeToggle />
+              </div>
+            </div>
             {sections.map(g => (
               <div key={g.group} className="mb-3">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-muted mb-1.5">{g.group}</p>
@@ -273,4 +291,18 @@ export default function App() {
       <ConfirmHost />
     </div>
   );
+}
+
+export default function App() {
+  const route = useRoute();
+  // Route publique : affichée seule, sans la navigation de l'application.
+  if (route.section === 'verifier') {
+    return (
+      <Suspense fallback={<Loading label="Chargement de la vérification…" />}>
+        <VerifyPage />
+        <ToastContainer />
+      </Suspense>
+    );
+  }
+  return <AppShell />;
 }

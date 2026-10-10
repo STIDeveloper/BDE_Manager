@@ -4,7 +4,7 @@
 import { createBlockFactory, safeFileName } from '../model.js';
 import {
   formatDateLong, formatMoney, amountInWords, isoDate, fullName, officialName, roleLabelOf,
-  signatory, signatureSlot, organizationLegalLine, cityOf, memberWithRole, plural,
+  signatory, signatureSlot, organizationLegalLine, cityOf, memberWithRole, plural, academicYear,
 } from '../context.js';
 import {
   str, orBlank, cleanList, checkIban, formatIban, parseAmount, normalizeLines, sumLines,
@@ -511,4 +511,121 @@ const budgetPrevisionnel = {
   },
 };
 
-export default [conventionPartenariat, noteDeFrais, attestationEvenement, budgetPrevisionnel];
+// ------------------------------------------------------------
+// Rapport financier (assemblée générale)
+// ------------------------------------------------------------
+// Les chiffres sont passés par `values` : le module Trésorerie les agrège
+// (src/modules/finance/Report.jsx → issueDocuments) ; depuis le Studio, le
+// formulaire se remplit à la main (lignes vides → tableaux à compléter).
+
+/** Synthèse chiffrée d'un rapport financier (exportée pour réutilisation). */
+export function financialSummary(values) {
+  const recettes = sumLines(values?.recettes);
+  const depenses = sumLines(values?.depenses);
+  const openingRaw = parseAmount(values?.soldeOuverture);
+  const opening = Number.isFinite(openingRaw) ? Math.round(openingRaw * 100) / 100 : null;
+  const result = Math.round((recettes - depenses) * 100) / 100;
+  const closing = opening === null ? null : Math.round((opening + result) * 100) / 100;
+  return { recettes, depenses, result, opening, closing };
+}
+
+const rapportFinancier = {
+  id: 'rapport-financier',
+  category: 'partenariats',
+  title: 'Rapport financier',
+  description: 'Compte de résultat de l\'exercice (recettes et dépenses par catégorie, soldes) à présenter en assemblée générale.',
+  icon: 'PiggyBank',
+  tags: ['rapport', 'financier', 'trésorerie', 'AG', 'assemblée générale', 'comptes', 'bilan', 'exercice'],
+  scope: 'organization',
+  legal: {
+    note: 'Présentation simplifiée en recettes / dépenses (comptabilité de trésorerie), suffisante pour la plupart des associations étudiantes. Les associations recevant plus de 153 000 € de subventions publiques ou de dons ont des obligations comptables renforcées (comptes annuels, commissaire aux comptes).',
+  },
+  fields: [
+    { key: 'exercice', label: 'Exercice', type: 'text', placeholder: '2026-2027', default: (ctx) => academicYear(ctx.today) },
+    { key: 'startDate', label: 'Début de l\'exercice', type: 'date' },
+    { key: 'endDate', label: 'Fin de l\'exercice', type: 'date' },
+    { key: 'compte', label: 'Compte bancaire', type: 'text', placeholder: 'Compte courant' },
+    { key: 'soldeOuverture', label: 'Solde en début d\'exercice (€)', type: 'money' },
+    { key: 'recettes', label: 'Recettes par catégorie', type: 'lines', help: 'Ex. Cotisations — 1200' },
+    { key: 'depenses', label: 'Dépenses par catégorie', type: 'lines', help: 'Ex. Alimentation — 640' },
+    { key: 'faits', label: 'Faits marquants', type: 'list', help: 'Un fait par ligne (événement bénéficiaire, subvention obtenue…).' },
+    { key: 'enAttente', label: 'Opérations non encore validées', type: 'text', help: 'Facultatif. Ex. « 3 dépenses (120 €) en attente de justificatif ».' },
+    { key: 'commentaire', label: 'Commentaire du trésorier', type: 'textarea' },
+    { key: 'treasurerId', label: 'Trésorier(ère)', type: 'member', default: (ctx) => memberWithRole(ctx, ['tresorier'])?.id || '' },
+    { key: 'date', label: 'Date d\'établissement', type: 'date', default: (ctx) => isoDate(ctx.today) },
+  ],
+  warnings: (_ctx, values) => {
+    const out = [...lineWarnings(values?.recettes, 'recette'), ...lineWarnings(values?.depenses, 'dépense')];
+    const s = financialSummary(values);
+    if (s.result < 0) out.push(`Exercice déficitaire de ${formatMoney(-s.result)}.`);
+    if (s.closing !== null && s.closing < 0) out.push('Le solde de clôture calculé est négatif : vérifie le solde d\'ouverture et les montants.');
+    return out;
+  },
+  build: (ctx, values) => {
+    const b = createBlockFactory();
+    const org = ctx.organization;
+    const exercice = str(values.exercice) || academicYear(ctx.today);
+    const s = financialSummary(values);
+    const recettes = normalizeLines(values.recettes);
+    const depenses = normalizeLines(values.depenses);
+    const treasurer = signatory(ctx, values.treasurerId, ['tresorier']);
+    const president = signatory(ctx, null, ['president']);
+    const date = values.date || isoDate(ctx.today);
+    const period = formatDateLong(values.startDate) && formatDateLong(values.endDate)
+      ? `Du ${formatDateLong(values.startDate)} au ${formatDateLong(values.endDate)}` : '';
+    const blank = '__________ €';
+
+    const blocks = [
+      b.title('Rapport financier', `Exercice ${exercice} · ${org.name}`),
+      b.kv([
+        ['Association', org.name],
+        ['Exercice', exercice],
+        ['Période', period],
+        ['Compte', str(values.compte)],
+        ['Établi le', formatDateLong(date)],
+      ]),
+      b.p(`Le présent rapport présente les recettes et les dépenses de l'association au cours de l'exercice ${exercice}, établies à partir des opérations enregistrées et validées par la trésorerie. Il est soumis à l'approbation de l'assemblée générale.`),
+      b.heading('Synthèse'),
+      b.kv([
+        ['Solde en début d\'exercice', s.opening === null ? blank : formatMoney(s.opening)],
+        ['Total des recettes', formatMoney(s.recettes)],
+        ['Total des dépenses', formatMoney(s.depenses)],
+        [s.result >= 0 ? 'Excédent de l\'exercice' : 'Déficit de l\'exercice', formatMoney(Math.abs(s.result))],
+        ['Solde en fin d\'exercice', s.closing === null ? blank : formatMoney(s.closing)],
+      ]),
+      b.heading('Recettes'),
+      budgetTable(b, recettes, s.recettes),
+      b.heading('Dépenses'),
+      budgetTable(b, depenses, s.depenses),
+    ];
+    if (!recettes.length && !depenses.length) {
+      blocks.push(b.callout('Aucune ligne saisie : les tableaux sont à compléter à la main, ou génère ce rapport depuis le module Trésorerie.', 'info'));
+    } else if (s.result < 0) {
+      blocks.push(b.callout(`L'exercice se solde par un déficit de **${formatMoney(-s.result)}** (${amountInWords(-s.result)}), couvert par les réserves de l'association.`, 'warning'));
+    } else {
+      blocks.push(b.callout(`L'exercice dégage un excédent de **${formatMoney(s.result)}** (${amountInWords(s.result)}), dont l'affectation est proposée à l'assemblée générale.`, 'info'));
+    }
+    const faits = cleanList(values.faits);
+    if (faits.length) { blocks.push(b.heading('Faits marquants')); blocks.push(b.list(faits)); }
+    if (str(values.enAttente)) blocks.push(b.small(`Opérations non intégrées (en attente de validation) : ${str(values.enAttente)}`));
+    if (str(values.commentaire)) { blocks.push(b.heading('Commentaire du trésorier')); blocks.push(b.p(str(values.commentaire))); }
+    blocks.push(b.placeDate(cityOf(org), formatDateLong(date)));
+    blocks.push(b.signatures([
+      signatureSlot(treasurer, 'Le trésorier', { mention: 'Rapport établi et certifié sincère' }),
+      signatureSlot(president, 'Le président'),
+    ]));
+    blocks.push(b.blankLines(['Comptes approuvés par l\'assemblée générale du : ________________', 'Affectation du résultat décidée : ________________']));
+
+    return {
+      meta: {
+        templateId: 'rapport-financier',
+        title: `Rapport financier — exercice ${exercice}`,
+        fileName: safeFileName(`Rapport_financier_${exercice}`),
+        memberIds: treasurer ? [treasurer.member.id] : [],
+      },
+      blocks,
+    };
+  },
+};
+
+export default [conventionPartenariat, noteDeFrais, attestationEvenement, budgetPrevisionnel, rapportFinancier];

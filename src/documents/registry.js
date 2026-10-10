@@ -7,11 +7,62 @@ import organisation from './templates/organisation.js';
 import partenariats from './templates/partenariats.js';
 import rgpd from './templates/rgpd.js';
 
+import { compileCustomTemplate } from './customTemplates.js';
+import { packTemplate } from './pack.js';
+
+/** Modèles intégrés (code). */
 export const TEMPLATES = [...membres, ...gouvernance, ...organisation, ...partenariats, ...rgpd];
 
 const BY_ID = new Map(TEMPLATES.map(t => [t.id, t]));
+/** Modèles « système » : connus du registre mais absents de la galerie. */
+const HIDDEN = new Map([[packTemplate.id, packTemplate]]);
 
-export const getTemplate = (id) => BY_ID.get(id) || null;
+// ------------------------------------------------------------
+// Modèles personnalisés (no-code) : source branchée par le store « docs »
+// (src/modules/docs/store.js) → { getRecords: () => ({ [id]: record }),
+// subscribe: (fn) => unsubscribe }. Fusion RÉACTIVE : getAllTemplates()
+// renvoie une liste stable tant que les enregistrements ne changent pas.
+// ------------------------------------------------------------
+
+let customSource = null;
+const templateListeners = new Set();
+const compiled = new WeakMap();
+let cache = { records: undefined, custom: [], all: TEMPLATES, byId: new Map() };
+
+function notifyTemplates() { templateListeners.forEach(fn => fn()); }
+
+export function setCustomTemplateSource(source) {
+  customSource = source || null;
+  customSource?.subscribe?.(notifyTemplates);
+  notifyTemplates();
+}
+
+function refresh() {
+  const records = customSource?.getRecords?.() || null;
+  if (records === cache.records) return cache;
+  const custom = [];
+  Object.values(records || {}).forEach(rec => {
+    if (!rec || typeof rec !== 'object' || BY_ID.has(rec.id)) return;
+    let t = compiled.get(rec);
+    if (!t) {
+      try { t = compileCustomTemplate(rec); compiled.set(rec, t); } catch (e) { console.error('[Documents] modèle personnalisé invalide', e?.message); return; }
+    }
+    custom.push(t);
+  });
+  custom.sort((a, b) => a.title.localeCompare(b.title, 'fr'));
+  cache = { records, custom, all: custom.length ? [...TEMPLATES, ...custom] : TEMPLATES, byId: new Map(custom.map(t => [t.id, t])) };
+  return cache;
+}
+
+/** Modèles intégrés + personnalisés (liste stable entre deux changements). */
+export const getAllTemplates = () => refresh().all;
+export const getCustomTemplates = () => refresh().custom;
+export function subscribeTemplates(fn) {
+  templateListeners.add(fn);
+  return () => templateListeners.delete(fn);
+}
+
+export const getTemplate = (id) => BY_ID.get(id) || refresh().byId.get(id) || HIDDEN.get(id) || null;
 
 /** Valeurs par défaut du formulaire d'un modèle. */
 export function defaultValues(template, ctx, member = null) {

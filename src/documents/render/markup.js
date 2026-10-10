@@ -13,6 +13,8 @@ import {
   parseInline, str, letterheadInfo, footerIdentity, referenceLine, isSafeImageSrc,
   readImageSize, fitBox, safeHex, stampSlotIndex, accentPalette,
 } from './shared.js';
+import { qrPngDataUrl } from '../qr.js';
+import { verificationUrl } from '../verification.js';
 
 const VOID_TAGS = new Set(['img', 'br', 'col', 'hr']);
 const PX_PER_MM = 96 / 25.4;
@@ -219,14 +221,29 @@ function letterheadNode(org, forWord) {
     h('div', { class: 'doc-rule', 'aria-hidden': 'true' }, forWord ? '\u00A0' : null));
 }
 
-function footerNode(doc, org, issue) {
+/** QR code de vérification (document émis uniquement : référence + empreinte). */
+export function verificationQr(issue) {
+  if (!issue?.ref || !issue?.fingerprint) return null;
+  try {
+    const url = verificationUrl(issue.ref, issue.fingerprint);
+    return { url, src: qrPngDataUrl(url, { scale: 4, margin: 2 }) };
+  } catch (_e) {
+    return null;
+  }
+}
+
+function footerNode(doc, org, issue, forWord) {
+  const qr = verificationQr(issue);
   return h('footer', { class: 'doc-footer' },
     org.footerNote ? h('div', { class: 'doc-footer-note' }, str(org.footerNote)) : null,
     h('div', { class: 'doc-footer-id' }, footerIdentity(org)),
     h('table', { class: 'doc-footer-meta', role: 'presentation' }, h('tbody', null, h('tr', null,
       h('td', { class: 'doc-footer-ref' }, referenceLine(issue)),
       h('td', { class: 'doc-footer-conf' }, doc?.meta?.confidential ? 'CONFIDENTIEL' : '\u00A0'),
-      h('td', { class: 'doc-footer-page' }, str(doc?.meta?.title))))));
+      h('td', { class: 'doc-footer-page' }, str(doc?.meta?.title)),
+      qr ? h('td', { class: 'doc-footer-qr' },
+        imgNode(qr.src, { className: 'doc-qr', alt: `QR code de vérification du document ${str(issue.ref)}`, maxWmm: 15, maxHmm: 15, forWord }),
+        h('div', { class: 'doc-qr-caption' }, 'Vérifier')) : null))));
 }
 
 /**
@@ -250,7 +267,7 @@ export function buildSheet(doc, { organization = {}, issue = null, editable = fa
     attrs.style = `--doc-accent:${palette.hex};--doc-accent-text:${palette.textHex};--doc-accent-soft:${palette.softHex};--doc-on-accent:${palette.onRuleHex}`;
   }
   const head = letterheadNode(org, forWord);
-  const foot = footerNode(doc, org, issue);
+  const foot = footerNode(doc, org, issue, forWord);
   if (forWord) return h('article', attrs, head, blocks, foot);
   // Cadre en tableau : à l'impression, <thead>/<tfoot> se répètent sur
   // chaque page (marge haute + pied de page de CE document).

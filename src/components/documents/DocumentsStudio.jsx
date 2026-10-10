@@ -1,17 +1,27 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { BookOpen, Building2, FileText, ListTodo, Sparkles } from 'lucide-react';
+import { Archive, BookOpen, Building2, FileText, FolderArchive, ListTodo, Plus, Sparkles, Upload } from 'lucide-react';
 import { useStore } from '../../store';
 import { useCatalog } from '../../core/useCatalog';
 import { useDocumentContext } from '../../documents/useDocumentContext';
-import { TEMPLATES, getTemplate, collectSuggestions } from '../../documents/registry';
+import { getTemplate, collectSuggestions } from '../../documents/registry';
+import { useTemplates } from '../../documents/useTemplates';
+import { customFromBuiltin, normalizeCustomTemplate, parseCustomTemplateFile, emptyCustomBlock } from '../../documents/customTemplates';
+import { useDocsStore } from '../../modules/docs/store';
+import { useCan } from '../../core/permissions';
 import { toast } from '../ui/toastStore';
 import TemplateGallery from './TemplateGallery';
 import Generator from './Generator';
 import SuggestionsPanel from './SuggestionsPanel';
 import RegistryPanel from './RegistryPanel';
 import OrganizationProfileModal from './OrganizationProfileModal';
+import TemplateEditor from './TemplateEditor';
+import ArchivesPanel from './ArchivesPanel';
+import AnnualPackWizard from './AnnualPackWizard';
+import SendDialog from './SendDialog';
+import SignFlow from './SignFlow';
+import { downloadSignedPdf } from './signHelpers';
 import {
-  builtinSuggestions, mergeSuggestions, profileCompleteness, suggestionKey, suggestionToSession,
+  builtinSuggestions, mergeSuggestions, profileCompleteness, sortMembers, suggestionKey, suggestionToSession,
 } from './studioHelpers';
 
 // ============================================================
@@ -27,6 +37,7 @@ const TABS = [
   { id: 'create', label: 'Créer', icon: Sparkles },
   { id: 'todo', label: 'À faire', icon: ListTodo },
   { id: 'registry', label: 'Registre', icon: BookOpen },
+  { id: 'archives', label: 'Archives', icon: Archive },
 ];
 
 const readTab = () => {
@@ -55,6 +66,14 @@ function templateIdFromHash() {
 let sessionSeq = 0;
 const newSession = (init) => ({ ...init, key: `s${++sessionSeq}` });
 
+/** Point de départ d'un modèle créé « à partir de zéro ». */
+function starterTemplate() {
+  const blocks = ['title', 'paragraph', 'placeDate', 'signatures'].map(emptyCustomBlock);
+  blocks[0].text = 'Attestation';
+  blocks[1].text = 'Je soussigné(e) {signataire.nom}, {signataire.role} de {association.nom}, atteste que **{membre.prenom} {membre.nom}** est membre de l\'association pour l\'année universitaire {annee}, en qualité de {membre.role}.';
+  return normalizeCustomTemplate({ title: 'Nouveau modèle', scope: 'member', category: 'membres', icon: 'FileText', blocks });
+}
+
 export default function DocumentsStudio() {
   const uid = useId();
   const ctx = useDocumentContext();
@@ -63,6 +82,15 @@ export default function DocumentsStudio() {
   const members = useStore(s => s.members);
   const documentLog = useStore(s => s.documentLog);
   const removeDocumentLogEntry = useStore(s => s.removeDocumentLogEntry);
+  const templates = useTemplates();
+  const signatures = useDocsStore(s => s.signatures);
+  const saveCustomTemplate = useDocsStore(s => s.saveCustomTemplate);
+  const canWrite = useCan('documents', 'write');
+  const [editor, setEditor] = useState(null); // { key, initial, isNew, notice }
+  const [packOpen, setPackOpen] = useState(false);
+  const [sendEntries, setSendEntries] = useState(null);
+  const [signEntry, setSignEntry] = useState(null);
+  const importRef = useRef(null);
 
   const [tab, setTab] = useState(readTab);
   const [session, setSession] = useState(() => {
@@ -167,12 +195,55 @@ export default function DocumentsStudio() {
     });
   };
 
+  // ── Modèles personnalisés ──
+  const openEditor = (initial, isNew, notice = '') => {
+    setEditor({ key: `e${++sessionSeq}`, initial, isNew, notice });
+    window.scrollTo({ top: 0 });
+  };
+  const customize = (t) => {
+    try {
+      const sample = t.scope === 'member' ? sortMembers(ctx.members)[0] || null : null;
+      if (t.scope === 'member' && !sample) { toast.warn('Aucun membre', 'Ajoute au moins un membre pour personnaliser ce modèle.'); return; }
+      const { record, skipped } = customFromBuiltin(t, ctx, sample);
+      openEditor(record, true, `Copie modifiable du texte de « ${t.title} » : les valeurs du membre, de l'association et la date ont été remplacées par des variables. Les calculs automatiques du modèle d'origine ne sont pas repris.${skipped.length ? ` Non repris : ${skipped.join(', ')}.` : ''}`);
+    } catch (e) {
+      toast.error('Personnalisation impossible', e?.message);
+    }
+  };
+  const importTemplate = async (file) => {
+    if (!file) return;
+    try {
+      const rec = parseCustomTemplateFile(await file.text());
+      const saved = saveCustomTemplate({ ...rec, id: undefined });
+      toast.success('Modèle importé', `« ${saved.title} » est disponible dans la galerie.`);
+      selectTab('create');
+    } catch (e) {
+      toast.error('Import impossible', e?.message);
+    } finally {
+      if (importRef.current) importRef.current.value = '';
+    }
+  };
+  const downloadSigned = async (entry) => {
+    try {
+      const name = await downloadSignedPdf(entry, ctx, signatures[entry.id]);
+      toast.success('PDF signé téléchargé', name);
+    } catch (e) {
+      toast.error('Téléchargement impossible', e?.message);
+    }
+  };
+
   const openProfile = useCallback((field = null) => setProfile({ field }), []);
   const showRegistry = useCallback(() => { setTab('registry'); writeStorage(TAB_KEY, 'registry'); closeGenerator(); }, [closeGenerator]);
 
   const profileModal = profile && (
     <OrganizationProfileModal focusField={profile.field} onClose={() => setProfile(null)} />
   );
+
+  if (editor) {
+    return (
+      <TemplateEditor key={editor.key} initial={editor.initial} isNew={editor.isNew} notice={editor.notice} ctx={ctx} onClose={() => setEditor(null)} />
+    );
+  }
 
   if (session) {
     return (
@@ -197,7 +268,7 @@ export default function DocumentsStudio() {
                 Attestations, procès-verbaux, conventions, RGPD… générés à partir de tes données, numérotés et vérifiables.
               </p>
               <div className="flex flex-wrap gap-1.5 mt-2">
-                <span className="badge badge-neutral"><FileText size={10} aria-hidden="true" /> {TEMPLATES.length} modèle{TEMPLATES.length > 1 ? 's' : ''}</span>
+                <span className="badge badge-neutral"><FileText size={10} aria-hidden="true" /> {templates.length} modèle{templates.length > 1 ? 's' : ''}</span>
                 <span className="badge badge-neutral"><BookOpen size={10} aria-hidden="true" /> {documentLog.length} émis</span>
               </div>
             </div>
@@ -221,6 +292,21 @@ export default function DocumentsStudio() {
             </button>
           </div>
         </div>
+        {canWrite && (
+          <div className="relative flex flex-wrap gap-2 mt-3 pt-3 border-t border-line">
+            <button type="button" className="btn-primary py-1.5 text-sm" onClick={() => openEditor(starterTemplate(), true)}>
+              <Plus size={15} aria-hidden="true" /> Nouveau modèle
+            </button>
+            <button type="button" className="btn-secondary py-1.5 text-sm" onClick={() => importRef.current?.click()}>
+              <Upload size={15} aria-hidden="true" /> Importer un modèle (JSON)
+            </button>
+            <input ref={importRef} type="file" accept="application/json,.json" className="sr-only" tabIndex={-1} aria-label="Fichier de modèle JSON"
+              onChange={(e) => importTemplate(e.target.files?.[0])} />
+            <button type="button" className="btn-secondary py-1.5 text-sm" onClick={() => setPackOpen(true)}>
+              <FolderArchive size={15} aria-hidden="true" /> Dossier annuel
+            </button>
+          </div>
+        )}
       </header>
 
       {/* Sous-navigation */}
@@ -257,8 +343,10 @@ export default function DocumentsStudio() {
 
       <div id={`${uid}-panel-${tab}`} role="tabpanel" aria-labelledby={`${uid}-tab-${tab}`} tabIndex={-1} className="focus:outline-none">
         {tab === 'create' && (
-          <TemplateGallery templates={TEMPLATES} organization={ctx.organization} documentLog={documentLog}
-            onOpen={(t) => openGenerator({ templateId: t.id })} />
+          <TemplateGallery templates={templates} organization={ctx.organization} documentLog={documentLog}
+            onOpen={(t) => openGenerator({ templateId: t.id })}
+            onCustomize={canWrite ? customize : undefined}
+            onEditCustom={canWrite ? (t) => openEditor(t.record, false) : undefined} />
         )}
         {tab === 'todo' && (
           <SuggestionsPanel
@@ -276,16 +364,25 @@ export default function DocumentsStudio() {
         {tab === 'registry' && (
           <RegistryPanel
             documentLog={documentLog}
-            templates={TEMPLATES}
+            templates={templates}
             getTemplate={getTemplate}
             membersById={membersById}
             onRegenerate={regenerate}
             onRemove={removeDocumentLogEntry}
+            signatures={signatures}
+            canWrite={canWrite}
+            onSend={(e) => setSendEntries([e])}
+            onSign={setSignEntry}
+            onDownloadSigned={downloadSigned}
           />
         )}
+        {tab === 'archives' && <ArchivesPanel />}
       </div>
 
       {profileModal}
+      {packOpen && <AnnualPackWizard ctx={ctx} onClose={() => setPackOpen(false)} />}
+      {sendEntries && <SendDialog entries={sendEntries} onClose={() => setSendEntries(null)} />}
+      {signEntry && <SignFlow entry={signEntry} ctx={ctx} onClose={() => setSignEntry(null)} />}
     </div>
   );
 }
