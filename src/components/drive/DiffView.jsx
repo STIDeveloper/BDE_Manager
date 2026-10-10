@@ -1,9 +1,10 @@
-import React, { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import {
   GitCompare, Upload, ArrowRight, Plus, Minus, Pencil, AlertTriangle,
   CheckCircle2, X, User,
 } from 'lucide-react';
 import { useStore, PERMISSION_LEVELS } from '../../store';
+import { memberRoleLabel } from '../../core/useCatalog';
 
 const LEVEL_LABEL = (lvl) => {
   if (!lvl || lvl === 'none') return '—';
@@ -11,7 +12,10 @@ const LEVEL_LABEL = (lvl) => {
 };
 
 export default function DiffView() {
-  const { members, folders, drivePermissions } = useStore();
+  const members = useStore(s => s.members);
+  const folders = useStore(s => s.folders);
+  const drivePermissions = useStore(s => s.drivePermissions);
+  const roles = useStore(s => s.roles);
   const [imported, setImported] = useState(null);
   const [importError, setImportError] = useState('');
   const [filter, setFilter] = useState('all');
@@ -243,7 +247,7 @@ export default function DiffView() {
                             <span>{change.folder.name}</span>
                           </>
                         ) : (
-                          <span>{change.member.mainRole || 'Sans rôle'}</span>
+                          <span>{memberRoleLabel(change.member, roles) || 'Sans rôle'}</span>
                         )}
                       </div>
                     </div>

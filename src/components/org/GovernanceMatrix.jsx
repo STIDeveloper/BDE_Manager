@@ -1,60 +1,9 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { Table, Info, Download } from 'lucide-react';
-import { useStore, PERMISSION_LEVELS, getRootFolder } from '../../store';
+import { useStore, PERMISSION_LEVELS } from '../../store';
+import { useCatalogMaps } from '../../core/useCatalog';
+import { buildGovernanceCategories, dominantLevel } from '../../utils/governance';
 import { toast } from '../ui/toastStore';
-
-// Catégories de rôles pour les colonnes
-const ROLE_CATEGORIES = [
-  {
-    id: 'bureau',
-    label: '🏛️ Bureau',
-    match: (m) => {
-      const r = (m.mainRole || '').toLowerCase();
-      return ['président', 'vice-président', 'trésorier', 'secrétaire'].some(k => r.includes(k));
-    },
-  },
-  {
-    id: 'respoCom',
-    label: '🎯 Resp. Com',
-    match: (m) => {
-      const r = m.mainRole || '';
-      return r.startsWith('Respo Com') || r.startsWith('Respo Insta') || r.startsWith('Respo TikTok');
-    },
-  },
-  {
-    id: 'respoEvent',
-    label: '🎪 Resp. Event',
-    match: (m) => {
-      const r = m.mainRole || '';
-      return r.startsWith('Respo Event') || r.startsWith('Respo Sport');
-    },
-  },
-  {
-    id: 'respoPart',
-    label: '💼 Resp. Partenariat',
-    match: (m) => (m.mainRole || '').startsWith('Respo Partenariat'),
-  },
-  {
-    id: 'charges',
-    label: '👥 Chargés de projet',
-    match: (m) => {
-      const r = m.mainRole || '';
-      return !r.startsWith('Respo') && !['président', 'vice-président', 'trésorier', 'secrétaire']
-        .some(k => r.toLowerCase().includes(k));
-    },
-  },
-];
-
-// Calcule le niveau d'accès DOMINANT d'une catégorie sur un dossier
-function getCategoryLevel(membersInCategory, folderId, drivePermissions) {
-  const levelRank = { none: 0, reader: 1, commenter: 2, editor: 3 };
-  let maxLevel = 'none';
-  membersInCategory.forEach(m => {
-    const lvl = (drivePermissions[m.id] || {})[folderId] || 'none';
-    if (levelRank[lvl] > levelRank[maxLevel]) maxLevel = lvl;
-  });
-  return maxLevel;
-}
 
 const LEVEL_DISPLAY = {
   none:      { label: '🚫 Aucun',      cls: 'text-dim bg-elevated' },
@@ -64,7 +13,11 @@ const LEVEL_DISPLAY = {
 };
 
 export default function GovernanceMatrix() {
-  const { members, folders, drivePermissions } = useStore();
+  // Sélecteurs atomiques (Zustand v5).
+  const members = useStore(s => s.members);
+  const folders = useStore(s => s.folders);
+  const drivePermissions = useStore(s => s.drivePermissions);
+  const catalog = useCatalogMaps();
 
   // Filtre les dossiers importants (racines + sous-dossiers confidentiels)
   const relevantFolders = useMemo(() => {
@@ -77,30 +30,21 @@ export default function GovernanceMatrix() {
   }, [folders]);
 
   // Catégories avec membres
-  const categoriesWithMembers = useMemo(() => {
-    return ROLE_CATEGORIES
-      .map(cat => ({
-        ...cat,
-        members: members.filter(cat.match),
-      }))
-      .filter(cat => cat.members.length > 0);
-  }, [members]);
+  // Catégories dérivées du catalogue (bureau, encadrement par pôle, autres…)
+  const categoriesWithMembers = useMemo(
+    () => buildGovernanceCategories(members, catalog),
+    [members, catalog]);
 
   // Construit la matrice
   const matrix = useMemo(() => {
     return relevantFolders.map(folder => {
-      const root = getRootFolder(folder, folders);
-      const row = {
-        folder,
-        root,
-        cells: {},
-      };
+      const row = { folder, cells: {} };
       categoriesWithMembers.forEach(cat => {
-        row.cells[cat.id] = getCategoryLevel(cat.members, folder.id, drivePermissions);
+        row.cells[cat.id] = dominantLevel(cat.members, folder.id, drivePermissions);
       });
       return row;
     });
-  }, [relevantFolders, categoriesWithMembers, drivePermissions, folders]);
+  }, [relevantFolders, categoriesWithMembers, drivePermissions]);
 
   // Export CSV
   const handleExportCSV = () => {
@@ -112,7 +56,7 @@ export default function GovernanceMatrix() {
     ]);
     const escape = (v) => {
       const s = String(v ?? '');
-      return s.includes(',') ? '"' + s.replace(/"/g, '""') + '"' : s;
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
     const csv = '\ufeff' + [header, ...rows].map(r => r.map(escape).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -135,7 +79,7 @@ export default function GovernanceMatrix() {
           <div>
             <h3 className="text-sm font-bold text-ink">Matrice de gouvernance des données</h3>
             <p className="text-[10px] text-dim">
-              Croisement rôles × dossiers Drive • {relevantFolders.length} dossiers • {categoriesWithMembers.length} catégories
+              Croisement catégories de rôles (catalogue) × dossiers Drive • {relevantFolders.length} dossiers • {categoriesWithMembers.length} catégories
             </p>
           </div>
         </div>
@@ -162,7 +106,7 @@ export default function GovernanceMatrix() {
                   <div className="text-dim text-[10px] uppercase tracking-wider font-bold">Dossier Drive</div>
                 </th>
                 {categoriesWithMembers.map(cat => (
-                  <th key={cat.id} className="border-b border-r border-line p-3 text-center min-w-[120px]">
+                  <th key={cat.id} scope="col" title={cat.hint} className="border-b border-r border-line p-3 text-center min-w-[120px]">
                     <div className="text-ink text-xs font-bold">{cat.label}</div>
                     <div className="text-[10px] text-dim font-normal">
                       {cat.members.length} membre{cat.members.length > 1 ? 's' : ''}

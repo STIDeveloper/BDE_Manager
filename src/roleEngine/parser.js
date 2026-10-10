@@ -58,7 +58,13 @@ export function mapHeader(header) {
   return 'unknown';
 }
 
-export function parseResponses(csvText) {
+/**
+ * Parse un export CSV Google Form.
+ * @param {string} csvText
+ * @param {object} [catalog]  Catalogue utilisé pour reconnaître les rôles
+ *                            (défaut : catalogue actif)
+ */
+export function parseResponses(csvText, catalog) {
   const rows = parseCSV(csvText);
   if (rows.length < 2) throw new Error('CSV vide ou trop court');
   const headers = rows[0].map(mapHeader);
@@ -93,7 +99,7 @@ export function parseResponses(csvText) {
     const seen = new Set();
     const dedup = [];
     rawChoices.forEach(c => {
-      const canonId = parseRoleLabel(c) || c.toLowerCase().trim();
+      const canonId = parseRoleLabel(c, catalog) || c.toLowerCase().trim();
       if (!seen.has(canonId)) {
         seen.add(canonId);
         dedup.push(c);

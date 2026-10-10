@@ -1,9 +1,10 @@
-import React from 'react';
-import { X, Quote, AlertTriangle, TrendingUp, Download, ChevronRight } from 'lucide-react';
+import { Quote, AlertTriangle, TrendingUp, Download, ChevronRight } from 'lucide-react';
 import Modal from '../Modal';
-import { ROLE_CATALOG } from '../../roleEngine/config.js';
 import { explainAssignment, generateMemberCard } from '../../roleEngine/explain.js';
 import { downloadMemberCard } from '../../roleEngine/exportOrgChart.js';
+import { useRolesStore } from '../../roleEngine/store.js';
+import { useCatalogMaps } from '../../core/useCatalog.js';
+import { poleLabelIn } from '../../core/catalog.js';
 import { toast } from '../ui/toastStore';
 
 const CRITERIA_LABEL = {
@@ -11,35 +12,41 @@ const CRITERIA_LABEL = {
   A: 'Ambition', M: 'Motivation', F: 'Formation',
 };
 
-export default function MemberExplainModal({ isOpen, onClose, candidate, assignment, stability }) {
+/**
+ * Fiche détaillée (explication du score) d'un candidat placé ou non placé.
+ * @param {object} props
+ * @param {object} [props.weights]  Poids du scénario affiché (défaut : poids courants)
+ */
+export default function MemberExplainModal({ isOpen, onClose, candidate, assignment, stability, weights }) {
+  // Hooks AVANT tout retour anticipé (règles des hooks)
+  const catalog = useCatalogMaps();
+  const currentWeights = useRolesStore(s => s.weights);
+
   if (!isOpen || !candidate || !assignment) return null;
 
-  const role = ROLE_CATALOG.find(r => r.id === assignment.roleId);
+  const role = assignment.roleId ? catalog.roles[assignment.roleId] : null;
 
-  // ⚠️ CORRECTIF : guard sur stability.stability avant .get()
+  // Garde sur stability.stability avant .get()
   let stabScore = null;
-  if (stability && stability.stability && typeof stability.stability.get === 'function') {
-    stabScore = stability.stability.get(`${candidate.id}:${assignment.roleId}`) ?? 1;
+  if (assignment.roleId && stability?.stability && typeof stability.stability.get === 'function') {
+    stabScore = stability.stability.get(`${candidate.id}:${assignment.roleId}`) ?? null;
   }
 
   const stabState = stabScore == null
     ? null
     : stabScore >= 0.75 ? 'stable' : stabScore >= 0.5 ? 'unstable' : 'critical';
 
-  const explanation = explainAssignment(assignment, candidate, {
-    weights: assignment.score ? {
-      P: 0.40, D: 0.20, E: 0.15, A: 0.10, M: 0.10, F: 0.05,
-    } : undefined,
+  const opts = {
+    weights: weights || currentWeights,
     stability: stabState,
     stabilityScore: stabScore,
-  });
+    catalog,
+  };
+  const explanation = explainAssignment(assignment, candidate, opts);
 
   const handleExport = () => {
     try {
-      const text = generateMemberCard(assignment, candidate, {
-        stability: stabState,
-        stabilityScore: stabScore,
-      });
+      const text = generateMemberCard(assignment, candidate, opts);
       downloadMemberCard(text, candidate);
       toast.success('Fiche téléchargée');
     } catch (err) {
@@ -72,6 +79,11 @@ export default function MemberExplainModal({ isOpen, onClose, candidate, assignm
               <div className="text-sm font-semibold text-ink mt-1">
                 {explanation.headline}
               </div>
+              {role && (
+                <div className="text-[11px] text-dim mt-0.5">
+                  {poleLabelIn(catalog, role.pole)} · {catalog.levels[role.level]?.label || role.level}
+                </div>
+              )}
             </div>
             {assignment.score && (
               <div className="text-right shrink-0">
@@ -130,7 +142,7 @@ export default function MemberExplainModal({ isOpen, onClose, candidate, assignm
             </h4>
             <div className="space-y-1.5">
               {explanation.signals.map((s, i) => (
-                <div key={i} className="bg-elevated border border-line rounded-lg p-2.5 text-xs">
+                <div key={`${s.type}-${i}`} className="bg-elevated border border-line rounded-lg p-2.5 text-xs">
                   <div className="text-[10px] uppercase tracking-wider text-muted font-medium mb-1">
                     {s.type}
                   </div>

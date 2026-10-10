@@ -1,65 +1,83 @@
 // ============================================================
-// Catalogue de rôles — modifiable via l'UI de configuration
+// Configuration du moteur de rôles
+// ============================================================
+// Le catalogue (pôles / niveaux / rôles) ne vit PLUS ici : la source de
+// vérité unique est src/core/catalog.js. Le moteur lit le catalogue actif
+// via getActiveCatalog(), ou un catalogue explicite passé en option
+// (`opts.catalog`) — ce qui permet de tester sans état global.
 // ============================================================
 
-export const DEFAULT_CAPACITIES = {
-  president: 1,
-  vice_president: 1,
-  secretaire: 1,
-  secretaire_adjoint: 1,
-  tresorier: 1,
-  responsable_communication: 2,
-  responsable_communication_interne: 1,
-  responsable_projets: 2,
-  responsable_sport: 1,
-  responsable_esport: 1,
-  responsable_partenariats: 1,
-  membre_communication: 10,
-  membre_communication_interne: 5,
-  membre_projets: 8,
-  membre_sport: 4,
-  membre_esport: 4,
-  membre_partenariats: 4,
-};
+import {
+  DEFAULT_CATALOG, getActiveCatalog, listRoles, capacitiesOf, poleLabelIn,
+} from '../core/catalog.js';
 
-export const ROLE_CATALOG = [
-  // --- BUREAU ---
-  { id: 'president',                        label: 'Président(e)',                level: 'bureau',      pole: 'Bureau',                leadership: true },
-  { id: 'vice_president',                   label: 'Vice-Président(e)',           level: 'bureau',      pole: 'Bureau',                leadership: true },
-  { id: 'secretaire',                       label: 'Secrétaire',                  level: 'bureau',      pole: 'Bureau',                leadership: false },
-  { id: 'secretaire_adjoint',               label: 'Secrétaire adjoint(e)',       level: 'adjoint',     pole: 'Bureau',                leadership: false },
-  { id: 'tresorier',                        label: 'Trésorier(ère)',              level: 'bureau',      pole: 'Bureau',                leadership: false },
+// ------------------------------------------------------------
+// ACCÈS AU CATALOGUE
+// ------------------------------------------------------------
 
-  // --- COMMUNICATION ---
-  { id: 'responsable_communication',        label: 'Responsable Communication',   level: 'responsable', pole: 'Communication',         leadership: true },
-  { id: 'responsable_communication_interne',label: 'Responsable Com. Interne',    level: 'responsable', pole: 'Communication Interne', leadership: true },
-  { id: 'membre_communication',             label: 'Membre Communication',        level: 'membre',      pole: 'Communication',         leadership: false },
-  { id: 'membre_communication_interne',     label: 'Membre Com. Interne',         level: 'membre',      pole: 'Communication Interne', leadership: false },
+/**
+ * Renvoie le catalogue à utiliser : celui passé explicitement, sinon le
+ * catalogue actif (alimenté par le store principal).
+ * @param {{poles:object, levels:object, roles:object}} [catalog]
+ */
+export function resolveCatalog(catalog) {
+  return catalog && typeof catalog === 'object' && catalog.roles ? catalog : getActiveCatalog();
+}
 
-  // --- PROJETS ---
-  { id: 'responsable_projets',              label: 'Responsable Projets',         level: 'responsable', pole: 'Projets',               leadership: true },
-  { id: 'membre_projets',                   label: 'Membre Projets',              level: 'membre',      pole: 'Projets',               leadership: false },
+/**
+ * Liste triée des rôles du catalogue (remplace l'ancien ROLE_CATALOG).
+ * Ordre : ordre du pôle → ordre du rôle → ordre du niveau.
+ */
+export function getCatalogRoles(catalog) {
+  return listRoles(resolveCatalog(catalog));
+}
 
-  // --- SPORT ---
-  { id: 'responsable_sport',                label: 'Responsable Sport',           level: 'responsable', pole: 'Sport',                 leadership: true },
-  { id: 'membre_sport',                     label: 'Membre Sport',                level: 'membre',      pole: 'Sport',                 leadership: false },
+/**
+ * Capacité effective d'un rôle : valeur de la map `capacities` si présente,
+ * sinon capacité déclarée dans le catalogue (cas d'un rôle créé après que
+ * l'appelant a figé sa map de capacités), sinon 0.
+ */
+export function capacityOf(role, capacities) {
+  const v = capacities ? capacities[role.id] : undefined;
+  const n = Number(v ?? role.capacity ?? 0);
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+}
 
-  // --- E-SPORT ---
-  { id: 'responsable_esport',               label: 'Responsable E-Sport',         level: 'responsable', pole: 'E-Sport',               leadership: true },
-  { id: 'membre_esport',                    label: 'Membre E-Sport',              level: 'membre',      pole: 'E-Sport',               leadership: false },
+/** Capacités par défaut d'un catalogue ({ roleId: capacity }). */
+export function defaultCapacities(catalog) {
+  return capacitiesOf(resolveCatalog(catalog));
+}
 
-  // --- PARTENARIATS ---
-  { id: 'responsable_partenariats',         label: 'Responsable Partenariats',    level: 'responsable', pole: 'Partenariats',          leadership: true },
-  { id: 'membre_partenariats',              label: 'Membre Partenariats',         level: 'membre',      pole: 'Partenariats',          leadership: false },
-];
+// ------------------------------------------------------------
+// SHIMS DE COMPATIBILITÉ (DEPRECATED)
+// ------------------------------------------------------------
 
-// Exigence de disponibilité minimale par niveau
-export const LEVEL_REQUIREMENT = {
-  bureau: 0.7,
-  responsable: 0.7,
-  adjoint: 0.5,
-  membre: 0.3,
-};
+/**
+ * Capacités du catalogue PAR DÉFAUT (figées au chargement du module).
+ * Les fonctions du moteur utilisent par défaut capacitiesOf(catalogue actif) ;
+ * cette constante reste exportée pour l'UI / le store et les tests.
+ */
+export const DEFAULT_CAPACITIES = Object.freeze(capacitiesOf(DEFAULT_CATALOG));
+
+/**
+ * @deprecated Utiliser getCatalogRoles(catalog) (moteur) ou les hooks de
+ * src/core/useCatalog.js (UI). Tableau STATIQUE dérivé du catalogue par
+ * défaut : il ne reflète ni les rôles personnalisés ni les renommages.
+ * ⚠️ `pole` est désormais l'ID du pôle (ex. 'communication'), plus son libellé ;
+ * `poleLabel` est fourni pour l'affichage en attendant la migration de l'UI.
+ */
+export const ROLE_CATALOG = Object.freeze(listRoles(DEFAULT_CATALOG).map(r => Object.freeze({
+  ...r,
+  aliases: [...(r.aliases || [])],
+  poleLabel: poleLabelIn(DEFAULT_CATALOG, r.pole),
+})));
+
+// ------------------------------------------------------------
+// PARAMÈTRES DE SCORING
+// ------------------------------------------------------------
+// NB : l'exigence de disponibilité par niveau (ex-LEVEL_REQUIREMENT) est
+// désormais `level.requirement`, et l'affinité formation → pôle
+// (ex-FORMATION_AFFINITY) est `pole.affinity` (formation absente → 0.5).
 
 // Pondérations par défaut du score S (somme = 1.00)
 export const DEFAULT_WEIGHTS = {
@@ -83,14 +101,8 @@ export const DEFAULT_PENALTIES = {
 // Seuil d'éligibilité : si S < seuil → slot reste VACANT
 export const DEFAULT_MIN_SCORE = 55;
 
-// Affinité formation → pôle (0..1)
-export const FORMATION_AFFINITY = {
-  InfoCOM:        { Communication: 1.0, 'Communication Interne': 1.0, Projets: 0.7, Sport: 0.4, 'E-Sport': 0.5, Partenariats: 0.6, Bureau: 0.6 },
-  Informatique:   { Communication: 0.5, 'Communication Interne': 0.5, Projets: 0.8, Sport: 0.5, 'E-Sport': 1.0, Partenariats: 0.6, Bureau: 0.7 },
-  GACO:           { Communication: 0.7, 'Communication Interne': 0.6, Projets: 0.8, Sport: 0.5, 'E-Sport': 0.5, Partenariats: 1.0, Bureau: 0.9 },
-  QLIO:           { Communication: 0.5, 'Communication Interne': 0.5, Projets: 0.8, Sport: 0.5, 'E-Sport': 0.6, Partenariats: 0.7, Bureau: 0.7 },
-  default:        { Communication: 0.5, 'Communication Interne': 0.5, Projets: 0.5, Sport: 0.5, 'E-Sport': 0.5, Partenariats: 0.5, Bureau: 0.5 },
-};
+// Affinité formation ↔ pôle quand la formation n'est pas renseignée dans le pôle
+export const DEFAULT_FORMATION_AFFINITY = 0.5;
 
 // Tailles cibles par pôle (plancher dur)
 export const DEFAULT_POLE_TARGETS = {

@@ -7,7 +7,10 @@ import { importResponses } from '../index.js';
 import { buildSlots } from '../roles.js';
 import { buildScoreMatrix } from '../scoring.js';
 import { solveAssignment, localSearch, hungarian } from '../solver.js';
-import { DEFAULT_CAPACITIES, DEFAULT_WEIGHTS, DEFAULT_PENALTIES, DEFAULT_MIN_SCORE } from '../config.js';
+import { DEFAULT_CAPACITIES, DEFAULT_WEIGHTS, DEFAULT_PENALTIES, DEFAULT_MIN_SCORE, getCatalogRoles } from '../config.js';
+import { DEFAULT_CATALOG } from '../../core/catalog.js';
+
+const ROLES = getCatalogRoles(DEFAULT_CATALOG);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -52,10 +55,7 @@ test('solver : un candidat = un poste, capacités respectées', async () => {
   const csv = fs.readFileSync(path.join(__dirname, 'sample.csv'), 'utf-8');
   const { candidates } = importResponses(csv);
   const slots = buildSlots(DEFAULT_CAPACITIES);
-  const matrix = buildScoreMatrix(candidates, slots.map(s => s.roleId === 'president' ? { id: 'president', level: 'bureau', pole: 'Bureau' } : null).filter(Boolean), DEFAULT_WEIGHTS, DEFAULT_PENALTIES);
-  // Utilise le vrai catalogue
-  const { ROLE_CATALOG } = await import('../config.js');
-  const matrixFull = buildScoreMatrix(candidates, ROLE_CATALOG, DEFAULT_WEIGHTS, DEFAULT_PENALTIES);
+  const matrixFull = buildScoreMatrix(candidates, ROLES, DEFAULT_WEIGHTS, DEFAULT_PENALTIES);
   const { assignments } = solveAssignment(candidates, slots, matrixFull, { minScore: DEFAULT_MIN_SCORE });
 
   // Vérifie unicité : chaque candidat apparaît une seule fois assigné
@@ -65,31 +65,48 @@ test('solver : un candidat = un poste, capacités respectées', async () => {
   // Vérifie que chaque slot est utilisé au plus une fois
   const usedSlots = assignments.filter(a => a.slotId).map(a => a.slotId);
   assert.equal(new Set(usedSlots).size, usedSlots.length);
+
+  // Capacités respectées : nb de slots par rôle = capacité
+  const total = Object.values(DEFAULT_CAPACITIES).reduce((s, n) => s + n, 0);
+  assert.equal(slots.length, total);
 });
 
-test('déterminisme : même entrée = même sortie', async () => {
+test('déterminisme : même entrée = même sortie', () => {
   const csv = fs.readFileSync(path.join(__dirname, 'sample.csv'), 'utf-8');
-  const run = async () => {
+  const run = () => {
     const { candidates } = importResponses(csv);
-    const { ROLE_CATALOG } = await import('../config.js');
     const slots = buildSlots(DEFAULT_CAPACITIES);
-    const matrix = buildScoreMatrix(candidates, ROLE_CATALOG, DEFAULT_WEIGHTS, DEFAULT_PENALTIES);
-    return solveAssignment(candidates, slots, matrix, { minScore: DEFAULT_MIN_SCORE }).assignments;
+    const matrix = buildScoreMatrix(candidates, ROLES, DEFAULT_WEIGHTS, DEFAULT_PENALTIES);
+    return solveAssignment(candidates, slots, matrix, { minScore: DEFAULT_MIN_SCORE }).assignments
+      .map(a => `${a.candidateId}:${a.slotId}:${a.score?.total ?? ''}`)
+      .join('|');
   };
-  // Note : ce test est dynamique, à compléter si on veut tester sur 2 appels
-  // On teste juste que le premier appel renvoie quelque chose de stable
-  const a1 = (async () => run())();
-  // Le test complet est dans le runner visuel
+  assert.equal(run(), run());
 });
 
-test('localSearch : score final ≥ score initial', async () => {
+test('localSearch : score final ≥ score initial', () => {
   const csv = fs.readFileSync(path.join(__dirname, 'sample.csv'), 'utf-8');
   const { candidates } = importResponses(csv);
-  const { ROLE_CATALOG } = await import('../config.js');
   const slots = buildSlots(DEFAULT_CAPACITIES);
-  const matrix = buildScoreMatrix(candidates, ROLE_CATALOG, DEFAULT_WEIGHTS, DEFAULT_PENALTIES);
+  const matrix = buildScoreMatrix(candidates, ROLES, DEFAULT_WEIGHTS, DEFAULT_PENALTIES);
   const initial = solveAssignment(candidates, slots, matrix, { minScore: DEFAULT_MIN_SCORE });
   const improved = localSearch(initial.assignments, matrix, { minScore: DEFAULT_MIN_SCORE });
   assert.ok(improved.globalScore >= initial.globalScore - 0.01,
     `Score dégradé : ${initial.globalScore} → ${improved.globalScore}`);
+});
+
+test('verrous : un verrou pendant (slot inexistant) ne bloque pas le candidat', () => {
+  const csv = fs.readFileSync(path.join(__dirname, 'sample.csv'), 'utf-8');
+  const { candidates } = importResponses(csv);
+  const slots = buildSlots(DEFAULT_CAPACITIES);
+  const matrix = buildScoreMatrix(candidates, ROLES, DEFAULT_WEIGHTS, DEFAULT_PENALTIES);
+  const kenzo = candidates.find(c => c.firstName === 'Kenzo');
+  const free = solveAssignment(candidates, slots, matrix, { minScore: DEFAULT_MIN_SCORE });
+  const dangling = solveAssignment(candidates, slots, matrix, {
+    minScore: DEFAULT_MIN_SCORE,
+    lockedPairs: new Set([`${kenzo.id}:role_supprime#1`, `inconnu:president#1`, 'mal-forme']),
+  });
+  const roleOf = (res) => res.assignments.find(a => a.candidateId === kenzo.id)?.roleId;
+  assert.equal(roleOf(dangling), roleOf(free));
+  assert.equal(roleOf(free), 'president');
 });

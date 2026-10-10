@@ -1,19 +1,21 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { StickyNote, X, Trash2, Save } from 'lucide-react';
 import { useStore } from '../../store';
 import { toast } from '../ui/toastStore';
 
 export default function PermissionNotePopover({ isOpen, onClose, member, folder, anchorRect }) {
-  const { permissionNotes, setPermissionNote } = useStore();
-  const [note, setNote] = useState('');
+  const permissionNotes = useStore(s => s.permissionNotes);
+  const setPermissionNote = useStore(s => s.setPermissionNote);
+  // État initialisé depuis la note existante : le parent remonte le composant
+  // (prop `key`) à chaque nouvelle cellule, pas besoin de setState dans un effet.
+  const [note, setNote] = useState(() => (member && folder ? permissionNotes[member.id]?.[folder.id] || '' : ''));
   const inputRef = useRef(null);
 
   useEffect(() => {
-    if (!isOpen || !member || !folder) return;
-    const current = permissionNotes[member.id]?.[folder.id] || '';
-    setNote(current);
-    setTimeout(() => inputRef.current?.focus(), 50);
-  }, [isOpen, member, folder, permissionNotes]);
+    if (!isOpen) return undefined;
+    const t = setTimeout(() => inputRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [isOpen]);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -52,7 +54,9 @@ export default function PermissionNotePopover({ isOpen, onClose, member, folder,
     <>
       <div className="fixed inset-0 z-[80]" onClick={onClose} />
       <div
-        className="fixed z-[90] bg-surface border border-line rounded-2xl shadow-2xl p-4 w-[340px]"
+        role="dialog"
+        aria-label={`Note : ${member.firstName} → ${folder.code}`}
+        className="fixed z-[90] bg-surface border border-line rounded-2xl shadow-2xl p-4 w-[340px] max-w-[calc(100vw-16px)]"
         style={{ left, top }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -70,7 +74,7 @@ export default function PermissionNotePopover({ isOpen, onClose, member, folder,
               </div>
             </div>
           </div>
-          <button onClick={onClose} className="text-dim hover:text-ink p-1 shrink-0"><X size={14} /></button>
+          <button type="button" onClick={onClose} aria-label="Fermer la note" className="text-dim hover:text-ink p-1 shrink-0"><X size={14} /></button>
         </div>
 
         <div className="text-[10px] text-dim mb-2 italic">
@@ -81,7 +85,8 @@ export default function PermissionNotePopover({ isOpen, onClose, member, folder,
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); handleSave(); }
           }}
-          placeholder="Ex : Accès temporaire jusqu'au 15/11, à vérifier avec Jade..."
+          aria-label="Texte de la note"
+          placeholder="Ex : Accès temporaire jusqu'au 15/11, à revoir avec le responsable du pôle..."
           className="w-full bg-elevated border border-line rounded-lg p-2.5 text-sm text-ink placeholder-dim focus:outline-none focus:border-amber-500 min-h-[90px] resize-none" />
 
         <div className="flex items-center justify-between gap-2 mt-3">
@@ -90,17 +95,17 @@ export default function PermissionNotePopover({ isOpen, onClose, member, folder,
           </div>
           <div className="flex gap-1">
             {existingNote && (
-              <button onClick={handleDelete}
+              <button type="button" onClick={handleDelete}
                 className="text-xs text-dim hover:text-red-500 p-2 rounded-lg border border-line transition-colors"
-                title="Supprimer la note">
+                title="Supprimer la note" aria-label="Supprimer la note">
                 <Trash2 size={12} />
               </button>
             )}
-            <button onClick={onClose}
+            <button type="button" onClick={onClose}
               className="text-xs text-dim hover:text-ink px-3 py-1.5 rounded-lg border border-line transition-colors">
               Annuler
             </button>
-            <button onClick={handleSave}
+            <button type="button" onClick={handleSave}
               className="text-xs bg-amber-500 hover:bg-amber-600 text-white font-bold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1">
               <Save size={12} /> Enregistrer
             </button>

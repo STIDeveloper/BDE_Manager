@@ -1,18 +1,26 @@
-import React from 'react';
+import { useMemo } from 'react';
 import {
-  Activity, Play, AlertTriangle, Shield, Info, Users, TrendingUp,
+  Activity, Play, AlertTriangle, Shield, Info, Users, UserX,
 } from 'lucide-react';
 import { useRolesStore } from '../../roleEngine/store.js';
-import { ROLE_CATALOG } from '../../roleEngine/config.js';
+import { useCatalog } from '../../core/useCatalog.js';
+import { isPlaced, isUnplaced } from './scenarioStats.js';
+
+const fullName = (c) => (c ? `${c.firstName || ''} ${c.lastName || ''}`.trim() || c.displayName || 'Candidat' : 'Candidat inconnu');
 
 export default function StabilityPanel() {
-  const { stability, stabilityLoading, runStability, candidates, getSelectedScenario } = useRolesStore();
-  const scenario = getSelectedScenario();
+  const stability = useRolesStore(s => s.stability);
+  const stabilityLoading = useRolesStore(s => s.stabilityLoading);
+  const runStability = useRolesStore(s => s.runStability);
+  const candidates = useRolesStore(s => s.candidates);
+  const scenario = useRolesStore(s => s.scenarios[s.selectedScenarioIndex] || null);
+  const { roleLabel } = useCatalog();
+  const candidatesById = useMemo(() => new Map(candidates.map(c => [c.id, c])), [candidates]);
 
   const handleRun = () => runStability(200);
 
   // ---------- État initial ----------
-  if (!stability) {
+  if (!stability || !scenario) {
     return (
       <div className="space-y-4">
         <div className="flex items-center gap-2">
@@ -43,16 +51,25 @@ export default function StabilityPanel() {
   }
 
   // ---------- Résultats ----------
+  // Uniquement les candidats PLACÉS (les non placés ont roleId null)
   const stabilityList = scenario.assignments
-    .filter(a => a.candidateId)
-    .map(a => {
-      const c = candidates.find(x => x.id === a.candidateId);
-      const role = ROLE_CATALOG.find(r => r.id === a.roleId);
-      const key = `${a.candidateId}:${a.roleId}`;
-      const value = stability.stability.get(key) ?? 0;
-      return { assignment: a, candidate: c, role, stability: value };
-    })
+    .filter(isPlaced)
+    .map(a => ({
+      assignment: a,
+      candidate: candidatesById.get(a.candidateId),
+      roleName: roleLabel(a.roleId),
+      stability: stability.stability.get(`${a.candidateId}:${a.roleId}`) ?? 0,
+    }))
     .sort((a, b) => a.stability - b.stability);
+
+  // Non placés : fréquence à laquelle ils obtiennent un poste (n'importe lequel)
+  const unplacedList = scenario.assignments
+    .filter(isUnplaced)
+    .map(a => {
+      let placedFreq = 0;
+      stability.stability.forEach((v, k) => { if (k.startsWith(`${a.candidateId}:`)) placedFreq += v; });
+      return { candidateId: a.candidateId, candidate: candidatesById.get(a.candidateId), placedFreq: Math.min(1, placedFreq) };
+    });
 
   const stable = stabilityList.filter(s => s.stability >= 0.75);
   const unstable = stabilityList.filter(s => s.stability >= 0.5 && s.stability < 0.75);
@@ -114,8 +131,9 @@ export default function StabilityPanel() {
       {/* Liste détaillée */}
       <div className="bg-surface border border-line rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-line flex items-center gap-2">
-          <Users size={13} className="text-dim" />
+          <Users size={13} className="text-dim" aria-hidden="true" />
           <h4 className="text-sm font-medium text-ink">Stabilité par affectation</h4>
+          <span className="text-[10px] text-muted ml-auto">Scénario : {scenario.name}</span>
         </div>
         <div className="max-h-[500px] overflow-y-auto">
           <table className="w-full text-xs">
@@ -128,17 +146,17 @@ export default function StabilityPanel() {
               </tr>
             </thead>
             <tbody>
-              {stabilityList.map((row, i) => {
+              {stabilityList.map((row) => {
                 const pct = Math.round(row.stability * 100);
                 const tone = row.stability >= 0.75 ? 'emerald' : row.stability >= 0.5 ? 'amber' : 'red';
                 return (
-                  <tr key={i} className="border-b border-line/50 hover:bg-elevated/40">
+                  <tr key={row.assignment.candidateId} className="border-b border-line/50 hover:bg-elevated/40">
                     <td className="px-4 py-2 text-ink font-medium">
-                      {row.candidate.firstName} {row.candidate.lastName}
+                      {fullName(row.candidate)}
                     </td>
-                    <td className="px-4 py-2 text-dim">{row.role?.label}</td>
+                    <td className="px-4 py-2 text-dim">{row.roleName}</td>
                     <td className="px-4 py-2 text-right font-mono text-dim">
-                      {row.assignment.score?.total.toFixed(1)}
+                      {row.assignment.score?.total?.toFixed(1) ?? '—'}
                     </td>
                     <td className="px-4 py-2 text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -163,6 +181,29 @@ export default function StabilityPanel() {
         </div>
       </div>
 
+      {/* Candidats non placés (listés à part : pas de rôle à évaluer) */}
+      {unplacedList.length > 0 && (
+        <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <UserX size={14} className="text-amber-500" aria-hidden="true" />
+            <h4 className="text-sm font-semibold text-ink">
+              {unplacedList.length} candidat{unplacedList.length > 1 ? 's' : ''} non placé{unplacedList.length > 1 ? 's' : ''}
+            </h4>
+          </div>
+          <p className="text-[11px] text-dim mb-3">
+            Aucun poste au-dessus du seuil d'éligibilité dans ce scénario. Le pourcentage indique la part des simulations où le candidat obtient malgré tout un poste.
+          </p>
+          <ul className="space-y-1.5">
+            {unplacedList.map(u => (
+              <li key={u.candidateId} className="flex items-center justify-between gap-3 py-1.5 px-3 bg-surface rounded-lg border border-line text-xs">
+                <span className="text-ink font-medium truncate">{fullName(u.candidate)}</span>
+                <span className="font-mono text-dim shrink-0">placé dans {Math.round(u.placedFreq * 100)} %</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Paires bloquantes */}
       {stability.arbitrationsRequired.length > 0 && (
         <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-4">
@@ -173,16 +214,15 @@ export default function StabilityPanel() {
             </h4>
           </div>
           <div className="space-y-2">
-            {stability.arbitrationsRequired.slice(0, 10).map((arb, i) => {
-              const c = candidates.find(x => x.id === arb.candidateId);
-              const role = ROLE_CATALOG.find(r => r.id === arb.roleId);
+            {stability.arbitrationsRequired.slice(0, 10).map((arb) => {
+              const c = candidatesById.get(arb.candidateId);
               return (
-                <div key={i} className="flex items-center justify-between gap-3 py-1.5 px-3 bg-surface rounded-lg border border-line">
+                <div key={`${arb.candidateId}:${arb.roleId}`} className="flex items-center justify-between gap-3 py-1.5 px-3 bg-surface rounded-lg border border-line">
                   <div className="min-w-0">
                     <div className="text-xs text-ink font-medium truncate">
-                      {c?.firstName} {c?.lastName}
+                      {fullName(c)}
                     </div>
-                    <div className="text-[10px] text-dim truncate">{role?.label}</div>
+                    <div className="text-[10px] text-dim truncate">{roleLabel(arb.roleId)}</div>
                   </div>
                   <span className="text-[10px] font-mono text-red-500">
                     {Math.round(arb.stability * 100)}%

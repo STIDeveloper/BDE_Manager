@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import {
   Plus, Pencil, Trash2, ChevronUp, ChevronDown, Folder, FolderOpen,
-  X, Check, Tag, ChevronRight, AlertTriangle, Layers
+  X, Tag, AlertTriangle, Layers
 } from 'lucide-react';
 import Modal from './Modal';
 import { useStore, FOLDER_COLORS, getFolderColor, getRootFolder, getFolderTag } from '../store';

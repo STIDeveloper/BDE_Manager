@@ -1,13 +1,19 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { Eye, User, Info, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import {
-  useStore, PERMISSION_LEVELS, FOLDER_COLORS,
+  useStore, PERMISSION_LEVELS,
   getFolderColor, getRootFolder, getMemberConfigStatus, CONFIG_STATUS_META,
 } from '../../store';
 import { simulateMemberView } from '../../utils/driveAnalyzer';
+import { memberRoleLabel } from '../../core/useCatalog';
 
 export default function ShareSimulation() {
-  const { members, folders, drivePermissions, rolePresets } = useStore();
+  const members = useStore(s => s.members);
+  const folders = useStore(s => s.folders);
+  const drivePermissions = useStore(s => s.drivePermissions);
+  const rolePresets = useStore(s => s.rolePresets);
+  const roles = useStore(s => s.roles);
+  const roleText = (m) => memberRoleLabel(m, roles) || 'Sans rôle';
   const [selectedId, setSelectedId] = useState(members[0]?.id || null);
   const selected = members.find(m => m.id === selectedId);
 
@@ -70,7 +76,7 @@ export default function ShareSimulation() {
                     <div className={`text-sm font-medium truncate ${isSelected ? 'text-emerald-500' : 'text-ink'}`}>
                       {m.firstName} {m.lastName}
                     </div>
-                    <div className="text-[10px] text-dim truncate">{m.mainRole || 'Sans rôle'}</div>
+                    <div className="text-[10px] text-dim truncate">{roleText(m)}</div>
                   </div>
                 </button>
               );
@@ -90,7 +96,7 @@ export default function ShareSimulation() {
                 <div>
                   <h3 className="text-xl font-bold text-ink">{selected.firstName} {selected.lastName}</h3>
                   <span className="text-xs text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-md font-semibold inline-block mt-1">
-                    {selected.mainRole || 'Sans rôle'}
+                    {roleText(selected)}
                   </span>
                 </div>
                 {memberStatus && (

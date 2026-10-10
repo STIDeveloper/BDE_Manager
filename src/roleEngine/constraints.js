@@ -1,4 +1,6 @@
 import { normalizeKey } from './normalizer.js';
+import { resolveCatalog } from './config.js';
+import { levelRank, roleLabelIn } from '../core/catalog.js';
 
 // ============================================================
 // Contraintes par défaut — VIDES
@@ -33,8 +35,6 @@ export const BDE_MONTREUIL_PRESET = {
   forbiddenPenalty: 100,
 };
 
-const LEVEL_ORDER = { membre: 1, adjoint: 2, responsable: 3, bureau: 4 };
-
 export function findConstraintKey(candidate, dict) {
   if (!dict) return null;
   const keys = Object.keys(dict);
@@ -58,37 +58,61 @@ export function findConstraintKey(candidate, dict) {
   return null;
 }
 
-export function evaluateConstraints(candidate, role, constraints = DEFAULT_CONSTRAINTS) {
-  const forcedKey = findConstraintKey(candidate, constraints.forcedRoles);
+/**
+ * Évalue les contraintes manuelles d'un candidat sur un rôle.
+ * Les références pendantes (rôle ou niveau absent du catalogue) sont
+ * IGNORÉES : une contrainte vers un rôle supprimé ne bloque jamais un candidat.
+ * Le plafond de niveau (maxLevels) compare les rangs hiérarchiques via
+ * levelRank(catalog, levelId) (plus haut = plus élevé).
+ * @param {import('./types.js').Candidate} candidate
+ * @param {{id:string, level:string}} role
+ * @param {object} [constraints]
+ * @param {object} [catalog]  défaut : catalogue actif
+ * @returns {{action:'force'|'block'|'bonus'|null, score?:number, bonus?:number, reason?:string}}
+ */
+export function evaluateConstraints(candidate, role, constraints = DEFAULT_CONSTRAINTS, catalog) {
+  const cat = resolveCatalog(catalog);
+  const c = constraints || DEFAULT_CONSTRAINTS;
+  const forceScore = c.forceScore ?? DEFAULT_CONSTRAINTS.forceScore;
+  const preferredBonus = c.preferredBonus ?? DEFAULT_CONSTRAINTS.preferredBonus;
+
+  const forcedKey = findConstraintKey(candidate, c.forcedRoles);
   if (forcedKey) {
-    const forcedRoleId = constraints.forcedRoles[forcedKey];
-    if (forcedRoleId === role.id) {
-      return { action: 'force', score: constraints.forceScore, reason: `Placement prioritaire : ${forcedKey}` };
+    const forcedRoleId = c.forcedRoles[forcedKey];
+    // Rôle forcé inexistant → contrainte ignorée (sinon le candidat serait inplaçable)
+    if (cat.roles?.[forcedRoleId]) {
+      if (forcedRoleId === role.id) {
+        return { action: 'force', score: forceScore, reason: `Placement prioritaire : ${forcedKey}` };
+      }
+      return { action: 'block', score: 0, reason: `Rôle verrouillé sur ${roleLabelIn(cat, forcedRoleId)}` };
     }
-    return { action: 'block', score: 0, reason: `Rôle verrouillé sur ${forcedRoleId}` };
   }
 
-  const maxKey = findConstraintKey(candidate, constraints.maxLevels);
+  const maxKey = findConstraintKey(candidate, c.maxLevels);
   if (maxKey) {
-    const maxLvl = constraints.maxLevels[maxKey];
-    const maxOrder = LEVEL_ORDER[maxLvl] || 0;
-    const roleOrder = LEVEL_ORDER[role.level] || 0;
-    if (roleOrder > maxOrder) {
-      return { action: 'block', score: 0, reason: `Niveau plafonné à "${maxLvl}"` };
+    const maxLvl = c.maxLevels[maxKey];
+    // Niveau plafond inexistant → contrainte ignorée
+    if (cat.levels?.[maxLvl]) {
+      const maxRank = levelRank(cat, maxLvl);
+      const roleRank = levelRank(cat, role.level);
+      if (roleRank > maxRank) {
+        const lvlLabel = cat.levels[maxLvl].label || maxLvl;
+        return { action: 'block', score: 0, reason: `Niveau plafonné à "${lvlLabel}"` };
+      }
     }
   }
 
-  const forbKey = findConstraintKey(candidate, constraints.forbiddenRoles);
+  const forbKey = findConstraintKey(candidate, c.forbiddenRoles);
   if (forbKey) {
-    const list = constraints.forbiddenRoles[forbKey] || [];
+    const list = Array.isArray(c.forbiddenRoles[forbKey]) ? c.forbiddenRoles[forbKey] : [];
     if (list.includes(role.id)) {
       return { action: 'block', score: 0, reason: `Rôle interdit` };
     }
   }
 
-  const prefKey = findConstraintKey(candidate, constraints.preferredRoles);
-  if (prefKey && constraints.preferredRoles[prefKey] === role.id) {
-    return { action: 'bonus', bonus: constraints.preferredBonus, reason: `Rôle préféré (+${constraints.preferredBonus})` };
+  const prefKey = findConstraintKey(candidate, c.preferredRoles);
+  if (prefKey && c.preferredRoles[prefKey] === role.id) {
+    return { action: 'bonus', bonus: preferredBonus, reason: `Rôle préféré (+${preferredBonus})` };
   }
 
   return { action: null };

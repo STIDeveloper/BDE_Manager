@@ -1,9 +1,7 @@
-import React from 'react';
-import {
-  Trophy, Target, TrendingUp, AlertTriangle, Users, ChevronRight,
-} from 'lucide-react';
+import { Trophy, TrendingUp, AlertTriangle, Users, CheckCircle2 } from 'lucide-react';
 import { useRolesStore } from '../../roleEngine/store.js';
-import { ROLE_CATALOG } from '../../roleEngine/config.js';
+import { useCatalog } from '../../core/useCatalog.js';
+import { countAssignments } from './scenarioStats.js';
 
 function StatMini({ label, value, tone = 'ink' }) {
   const toneCls = {
@@ -22,54 +20,65 @@ function StatMini({ label, value, tone = 'ink' }) {
 }
 
 export default function ScenarioCompare() {
-  const {
-    scenarios, ranking, setSelectedScenario, selectedScenarioIndex,
-  } = useRolesStore();
+  const scenarios = useRolesStore(s => s.scenarios);
+  const ranking = useRolesStore(s => s.ranking);
+  const selectedScenarioIndex = useRolesStore(s => s.selectedScenarioIndex);
+  const setSelectedScenario = useRolesStore(s => s.setSelectedScenario);
+  const { poleList, poleLabel, poleColor } = useCatalog();
 
-  const standardScenarios = scenarios.slice(1); // exclut le "Personnalisé"
+  if (scenarios.length === 0) {
+    return <div className="text-center py-16 text-dim text-sm">Aucun scénario disponible. Importe d'abord un CSV.</div>;
+  }
+
+  // Pôles présents dans au moins un scénario, dans l'ordre du catalogue
+  const poleIds = new Set(scenarios.flatMap(s => Object.keys(s.poleSizes || {})));
+  const orderedPoles = [
+    ...poleList.filter(p => poleIds.has(p.id)).map(p => p.id),
+    ...[...poleIds].filter(id => !poleList.some(p => p.id === id)),
+  ];
 
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-2">
-        <Trophy size={16} className="text-amber-500" />
-        <h3 className="text-sm font-semibold text-ink">Comparaison des 3 scénarios</h3>
+        <Trophy size={16} className="text-amber-500" aria-hidden="true" />
+        <h3 className="text-sm font-semibold text-ink">Comparaison des {scenarios.length} scénarios</h3>
       </div>
+      <p className="text-[11px] text-dim -mt-3">
+        Clique sur un scénario pour l'activer : il sera utilisé par l'organigramme, les alertes, le tableau de bord et « Appliquer au BDE ».
+      </p>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        {standardScenarios.map((s, i) => {
-          const realIndex = i + 1;
-          const isSelected = selectedScenarioIndex === realIndex;
-          const globalIdx = scenarios.findIndex(x => x.name === s.name);
-
-          // Compteurs
-          const assigned = s.assignments.filter(a => a.candidateId).length;
-          const vacant = s.assignments.filter(a => a.vacant).length;
-          const rank1 = s.assignments.filter(a => a.score?.rank === 1).length;
-          const rank2 = s.assignments.filter(a => a.score?.rank === 2).length;
-          const rank3 = s.assignments.filter(a => a.score?.rank === 3).length;
-          const outRank = assigned - rank1 - rank2 - rank3;
-
-          const dangers = s.alerts.filter(a => a.severity === 'danger').length;
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3" role="radiogroup" aria-label="Scénario actif">
+        {scenarios.map((s, idx) => {
+          const isSelected = selectedScenarioIndex === idx;
+          const c = countAssignments(s);
+          const dangers = (s.alerts || []).filter(a => a.severity === 'danger').length;
 
           return (
             <button
+              type="button"
               key={s.name}
-              onClick={() => setSelectedScenario(globalIdx)}
-              className={`text-left rounded-xl border p-4 transition-all ${
+              role="radio"
+              aria-checked={isSelected}
+              onClick={() => setSelectedScenario(idx)}
+              className={`text-left rounded-xl border-2 p-4 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 ${
                 isSelected
-                  ? 'border-blue-500/50 bg-blue-500/5 shadow-md'
+                  ? 'border-blue-500 bg-blue-500/10 shadow-md'
                   : 'border-line bg-surface hover:border-line-strong'
               }`}
             >
-              <div className="flex items-start justify-between mb-3">
+              <div className="flex items-start justify-between gap-2 mb-3">
                 <div className="min-w-0">
                   <h4 className="text-sm font-bold text-ink truncate">{s.name}</h4>
-                  <p className="text-[11px] text-dim mt-0.5 line-clamp-2">{s.description}</p>
+                  <p className="text-[11px] text-dim mt-0.5 line-clamp-2">
+                    {idx === 0 ? 'Tes curseurs de pondération (onglet Pondération).' : s.description}
+                  </p>
                 </div>
-                {isSelected && (
-                  <span className="text-[9px] bg-blue-500 text-white px-1.5 py-0.5 rounded font-bold shrink-0">
-                    ACTIF
+                {isSelected ? (
+                  <span className="text-[9px] bg-blue-500 text-white px-1.5 py-0.5 rounded font-bold shrink-0 flex items-center gap-1">
+                    <CheckCircle2 size={10} aria-hidden="true" /> ACTIF
                   </span>
+                ) : (
+                  <span className="text-[9px] text-muted border border-line px-1.5 py-0.5 rounded shrink-0">Choisir</span>
                 )}
               </div>
 
@@ -80,31 +89,21 @@ export default function ScenarioCompare() {
               </div>
 
               <div className="grid grid-cols-2 gap-2 pt-3 text-[11px]">
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                  <span className="text-dim">🥇 {rank1}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-blue-500" />
-                  <span className="text-dim">🥈 {rank2}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-amber-500" />
-                  <span className="text-dim">🥉 {rank3}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-zinc-500" />
-                  <span className="text-dim">⚠️ {outRank}</span>
-                </div>
+                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500" /><span className="text-dim">🥇 {c.rank1}</span></div>
+                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-500" /><span className="text-dim">🥈 {c.rank2}</span></div>
+                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-500" /><span className="text-dim">🥉 {c.rank3}</span></div>
+                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-zinc-500" /><span className="text-dim">⚠️ {c.out + c.discover}</span></div>
               </div>
 
-              <div className="flex items-center justify-between mt-3 pt-3 border-t border-line text-[11px]">
-                <div className="flex items-center gap-1.5 text-dim">
-                  <Users size={11} /> {assigned} placés · {vacant} vacants
+              <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t border-line text-[11px]">
+                <div className="flex items-center gap-1.5 text-dim flex-wrap">
+                  <Users size={11} aria-hidden="true" /> {c.placed} placés
+                  {c.unplaced > 0 && <span className="text-amber-500">· {c.unplaced} non placés</span>}
+                  <span>· {c.vacant} vacants</span>
                 </div>
                 {dangers > 0 && (
-                  <span className="flex items-center gap-1 text-red-500 font-medium">
-                    <AlertTriangle size={10} /> {dangers}
+                  <span className="flex items-center gap-1 text-red-500 font-medium shrink-0" title={`${dangers} alerte(s) critique(s)`}>
+                    <AlertTriangle size={10} aria-hidden="true" /> {dangers}
                   </span>
                 )}
               </div>
@@ -145,32 +144,36 @@ export default function ScenarioCompare() {
       )}
 
       {/* Tableau détaillé */}
-      {standardScenarios.length > 0 && (
+      {orderedPoles.length > 0 && (
         <div className="bg-surface border border-line rounded-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-line">
             <h4 className="text-sm font-medium text-ink">Répartition par pôle</h4>
           </div>
-          <table className="w-full text-xs">
+          <div className="overflow-x-auto">
+          <table className="w-full text-xs min-w-[520px]">
             <thead className="bg-elevated">
               <tr className="border-b border-line">
-                <th className="text-left px-4 py-2 text-dim font-medium">Pôle</th>
-                {standardScenarios.map(s => (
-                  <th key={s.name} className="text-center px-4 py-2 text-dim font-medium">
+                <th scope="col" className="text-left px-4 py-2 text-dim font-medium">Pôle</th>
+                {scenarios.map((s, idx) => (
+                  <th scope="col" key={s.name} className={`text-center px-4 py-2 font-medium ${idx === selectedScenarioIndex ? 'text-blue-500' : 'text-dim'}`}>
                     {s.name}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {Object.keys(standardScenarios[0].poleSizes).map(pole => (
+              {orderedPoles.map(pole => (
                 <tr key={pole} className="border-b border-line/50">
-                  <td className="px-4 py-2 text-ink">{pole}</td>
-                  {standardScenarios.map(s => {
-                    const size = s.poleSizes[pole] || 0;
-                    const target = s.poleTargets[pole] || 0;
+                  <th scope="row" className="px-4 py-2 text-ink font-normal text-left">
+                    <span className="inline-block w-2 h-2 rounded-full mr-2 align-middle" style={{ background: poleColor(pole) }} aria-hidden="true" />
+                    {poleLabel(pole)}
+                  </th>
+                  {scenarios.map((s, idx) => {
+                    const size = s.poleSizes?.[pole] || 0;
+                    const target = s.poleTargets?.[pole] || 0;
                     const diff = size - target;
                     return (
-                      <td key={s.name} className="text-center px-4 py-2">
+                      <td key={s.name} className={`text-center px-4 py-2 ${idx === selectedScenarioIndex ? 'bg-blue-500/5' : ''}`}>
                         <span className="font-mono text-ink">{size}</span>
                         <span className="text-muted text-[10px]"> / {target}</span>
                         {diff !== 0 && (
@@ -187,6 +190,7 @@ export default function ScenarioCompare() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

@@ -1,7 +1,8 @@
 {
   "name": "bde-manager",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "BDE Manager — application web progressive (PWA) de gestion du Bureau des Étudiants : membres, rôles, Drive, coffre-fort.",
   "type": "module",
   "engines": {
     "node": ">=18.0.0"
@@ -9,8 +10,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "preview": "vite preview",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "test": "node --test \"src/**/*.test.js\"",
+    "check": "npm run lint && npm test && npm run build",
+    "icons:maskable": "node scripts/generate-maskable-icons.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -1,10 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Code2, Download, Copy, Check, AlertTriangle, Info, ExternalLink,
   FileText, Wand2,
 } from 'lucide-react';
 import Modal from '../Modal';
 import { useStore } from '../../store';
+import { useCatalogMaps } from '../../core/useCatalog';
 import { generateAppsScript, generateInstructionsText } from '../../utils/driveScriptGenerator';
 
 function downloadText(content, filename) {
@@ -18,14 +19,17 @@ function downloadText(content, filename) {
 }
 
 export default function ShareScriptModal({ isOpen, onClose }) {
-  const { members, folders, drivePermissions } = useStore();
+  const members = useStore(s => s.members);
+  const folders = useStore(s => s.folders);
+  const drivePermissions = useStore(s => s.drivePermissions);
+  const catalog = useCatalogMaps();
   const [folderIds, setFolderIds] = useState({});
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState('script');
 
   const { script, membersWithoutEmail, membersTable, foldersTable } = useMemo(() =>
-    generateAppsScript({ members, folders, drivePermissions, folderIdsByCode: folderIds }),
-    [members, folders, drivePermissions, folderIds]);
+    generateAppsScript({ members, folders, drivePermissions, folderIdsByCode: folderIds }, catalog),
+    [members, folders, drivePermissions, folderIds, catalog]);
 
   const instructions = useMemo(() =>
     generateInstructionsText({ membersTable, foldersTable, membersWithoutEmail }),

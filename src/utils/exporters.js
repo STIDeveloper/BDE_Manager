@@ -1,6 +1,14 @@
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
-import { PERMISSION_LEVELS, getRootFolder, getFolderTag } from '../store';
+// ============================================================
+// EXPORTS DE LA MATRICE DRIVE (CSV, TXT, PDF, JSON)
+// ============================================================
+// jsPDF + jspdf-autotable (~430 ko) sont chargés À LA DEMANDE dans
+// exportMatrixPDF via import() : ils ne pèsent plus sur le chargement
+// initial de l'application.
+// Les libellés de rôles viennent du catalogue (paramètre `catalog`).
+
+import { getActiveCatalog } from '../core/catalog.js';
+import { getFolderTag, orderedFolders } from './folderTree.js';
+import { memberRoleText } from './memberRoles.js';
 
 function downloadBlob(content, filename, type = 'text/plain;charset=utf-8') {
   const blob = new Blob([content], { type });
@@ -16,23 +24,12 @@ function timestamp() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function orderedFolders(folders) {
-  const result = [];
-  const addBranch = (parentId) => {
-    folders
-      .filter(f => (f.parent ?? null) === parentId)
-      .forEach(f => { result.push(f); addBranch(f.id); });
-  };
-  addBranch(null);
-  return result;
-}
-
-export function exportMatrixCSV({ members, folders, drivePermissions, includeEmptyRows = true }) {
+export function exportMatrixCSV({ members, folders, drivePermissions, includeEmptyRows = true }, catalog = getActiveCatalog()) {
   const ordered = orderedFolders(folders);
   const header = ['Membre', 'Rôle', 'Email', ...ordered.map(f => `${f.code} ${f.name}`)];
   const rows = members.map(m => {
     const userPerms = drivePermissions[m.id] || {};
-    const row = [m.firstName + (m.lastName ? ' ' + m.lastName : ''), m.mainRole || '', m.email || ''];
+    const row = [m.firstName + (m.lastName ? ' ' + m.lastName : ''), memberRoleText(m, catalog), m.email || ''];
     ordered.forEach(f => {
       const perm = userPerms[f.id] || 'none';
       row.push(perm === 'none' ? '' : perm.toUpperCase()[0]);
@@ -52,7 +49,7 @@ export function exportMatrixCSV({ members, folders, drivePermissions, includeEmp
   downloadBlob('\ufeff' + csv, `Matrice_Permissions_${timestamp()}.csv`, 'text/csv;charset=utf-8');
 }
 
-export function exportMatrixTXT({ members, folders, folderTags, drivePermissions, groupBy = 'folder' }) {
+export function exportMatrixTXT({ members, folders, folderTags, drivePermissions, groupBy = 'folder' }, catalog = getActiveCatalog()) {
   const ordered = orderedFolders(folders);
   const lines = [];
 
@@ -90,7 +87,7 @@ export function exportMatrixTXT({ members, folders, folderTags, drivePermissions
       });
       const total = grouped.editor.length + grouped.commenter.length + grouped.reader.length;
       if (total === 0) return;
-      lines.push(`👤 *${m.firstName} ${m.lastName || ''}* — ${m.mainRole || 'Sans rôle'}`);
+      lines.push(`👤 *${m.firstName} ${m.lastName || ''}* — ${memberRoleText(m, catalog) || 'Sans rôle'}`);
       if (grouped.editor.length > 0)    lines.push(`   ✏️ Éditeur : ${grouped.editor.join(', ')}`);
       if (grouped.commenter.length > 0) lines.push(`   💬 Commentateur : ${grouped.commenter.join(', ')}`);
       if (grouped.reader.length > 0)    lines.push(`   👁 Lecteur : ${grouped.reader.join(', ')}`);
@@ -102,7 +99,14 @@ export function exportMatrixTXT({ members, folders, folderTags, drivePermissions
   downloadBlob(lines.join('\n'), `Matrice_Permissions_${timestamp()}.txt`);
 }
 
-export function exportMatrixPDF({ members, folders, drivePermissions }) {
+export async function exportMatrixPDF({ members, folders, drivePermissions }, catalog = getActiveCatalog()) {
+  // Chargement différé : jsPDF n'est téléchargé qu'au premier export PDF.
+  const [pdfMod, tableMod] = await Promise.all([
+    import('jspdf'),
+    import('jspdf-autotable'),
+  ]);
+  const jsPDF = pdfMod.jsPDF || pdfMod.default;
+  const autoTable = tableMod.autoTable || tableMod.default;
   const ordered = orderedFolders(folders);
   const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
 
@@ -129,7 +133,7 @@ export function exportMatrixPDF({ members, folders, drivePermissions }) {
     const userPerms = drivePermissions[m.id] || {};
     return [
       `${m.firstName}${m.lastName ? ' ' + m.lastName : ''}`,
-      m.mainRole || '',
+      memberRoleText(m, catalog),
       ...ordered.map(f => {
         const lvl = userPerms[f.id] || 'none';
         return lvl === 'none' ? '' : lvl.charAt(0).toUpperCase();

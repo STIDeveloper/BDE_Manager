@@ -1,9 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import {
   AlertTriangle, AlertCircle, Info, ChevronDown, ChevronRight,
   CheckCircle2, Shield, Zap, Filter, X,
 } from 'lucide-react';
 import { useStore } from '../../store';
+import { useCatalogMaps } from '../../core/useCatalog';
 import { analyzeDriveState } from '../../utils/driveAnalyzer';
 
 const SEVERITY_META = {
@@ -19,7 +20,7 @@ function AlertRow({ alert, onNavigate }) {
 
   return (
     <div className={`rounded-xl border ${meta.border} ${meta.bg} overflow-hidden`}>
-      <button onClick={() => setExpanded(!expanded)}
+      <button type="button" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}
         className="w-full flex items-start gap-3 p-3 text-left hover:bg-white/[0.02] transition-colors">
         <div className={`shrink-0 p-1.5 rounded-lg ${meta.bg} border ${meta.border}`}>
           <Icon size={14} className={meta.text} />
@@ -69,13 +70,17 @@ function AlertRow({ alert, onNavigate }) {
 }
 
 export default function InsightsPanel({ onNavigate }) {
-  const { members, folders, drivePermissions, rolePresets } = useStore();
+  const members = useStore(s => s.members);
+  const folders = useStore(s => s.folders);
+  const drivePermissions = useStore(s => s.drivePermissions);
+  const rolePresets = useStore(s => s.rolePresets);
+  const catalog = useCatalogMaps();
   const [severityFilter, setSeverityFilter] = useState('all');
   const [search, setSearch] = useState('');
 
   const alerts = useMemo(() =>
-    analyzeDriveState({ members, folders, drivePermissions, rolePresets }),
-    [members, folders, drivePermissions, rolePresets]);
+    analyzeDriveState({ members, folders, drivePermissions, rolePresets }, catalog),
+    [members, folders, drivePermissions, rolePresets, catalog]);
 
   const counts = useMemo(() => {
     const c = { danger: 0, warning: 0, info: 0 };
@@ -119,7 +124,7 @@ export default function InsightsPanel({ onNavigate }) {
             placeholder="Rechercher une alerte..."
             className="w-full bg-surface border border-line rounded-xl px-3 py-1.5 text-ink placeholder-dim focus:outline-none focus:border-amber-500 text-sm" />
           {search && (
-            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-dim hover:text-ink">
+            <button type="button" onClick={() => setSearch('')} aria-label="Effacer la recherche" className="absolute right-2 top-1/2 -translate-y-1/2 text-dim hover:text-ink">
               <X size={14} />
             </button>
           )}

@@ -1,4 +1,5 @@
-import { ROLE_CATALOG, DEFAULT_POLE_TARGETS } from './config.js';
+import { resolveCatalog } from './config.js';
+import { isSeniorRole, poleLabelIn, listPoles } from '../core/catalog.js';
 
 // ============================================================
 // Générateur d'alertes
@@ -11,10 +12,20 @@ import { ROLE_CATALOG, DEFAULT_POLE_TARGETS } from './config.js';
  * @param {Map<string, number>} [params.poleTargets]
  * @param {object} [params.poleSizes]
  * @param {number} [params.minScore]
+ * @param {object} [params.catalog]  défaut : catalogue actif
  * @returns {import('./types.js').Alert[]}
+ *
+ * Les `refs` de pôle sont des IDS de pôle ; titres et messages affichent
+ * les LIBELLÉS du catalogue. Les lignes « non placé »
+ * ({candidateId, slotId:null, roleId:null}) et les rôles absents du
+ * catalogue sont tolérés.
  */
-export function detectAlerts({ candidates, assignments, poleTargets, poleSizes, minScore = 55 }) {
+export function detectAlerts({ candidates, assignments, poleTargets, poleSizes, minScore = 55, catalog }) {
+  const cat = resolveCatalog(catalog);
   const alerts = [];
+  const roleOf = (roleId) => cat.roles?.[roleId] || null;
+  const poleName = (poleId) => poleLabelIn(cat, poleId);
+  const candidateById = new Map(candidates.map(c => [c.id, c]));
 
   const byCandidate = new Map();
   assignments.forEach(a => { if (a.candidateId) byCandidate.set(a.candidateId, a); });
@@ -27,7 +38,7 @@ export function detectAlerts({ candidates, assignments, poleTargets, poleSizes, 
         alerts.push({
           severity: 'warning',
           code: 'pole_underpopulated',
-          title: `Pôle "${pole}" sous-doté`,
+          title: `Pôle "${poleName(pole)}" sous-doté`,
           message: `${actual} membre${actual > 1 ? 's' : ''} pour ${target} attendus. Envisager un renfort 🔥 couteau suisse.`,
           refs: [pole],
         });
@@ -35,7 +46,7 @@ export function detectAlerts({ candidates, assignments, poleTargets, poleSizes, 
         alerts.push({
           severity: 'info',
           code: 'pole_overpopulated',
-          title: `Pôle "${pole}" sur-doté`,
+          title: `Pôle "${poleName(pole)}" sur-doté`,
           message: `${actual} membres pour ${target} attendus. Le pôle peut absorber des missions transverses.`,
           refs: [pole],
         });
@@ -51,10 +62,10 @@ export function detectAlerts({ candidates, assignments, poleTargets, poleSizes, 
     }
   });
   Object.entries(vacantByRole).forEach(([roleId, count]) => {
-    const role = ROLE_CATALOG.find(r => r.id === roleId);
+    const role = roleOf(roleId);
     if (!role) return;
     alerts.push({
-      severity: role.level === 'bureau' || role.level === 'responsable' ? 'danger' : 'warning',
+      severity: isSeniorRole(cat, role) ? 'danger' : 'warning',
       code: 'vacant_role',
       title: `Poste vacant : ${role.label}`,
       message: `${count} place${count > 1 ? 's' : ''} non pourvue${count > 1 ? 's' : ''}. Aucun candidat n'a atteint le seuil de ${minScore} points.`,
@@ -100,12 +111,12 @@ export function detectAlerts({ candidates, assignments, poleTargets, poleSizes, 
   // ---------- 5. Surcharge de poste clé ----------
   assignments.forEach(a => {
     if (!a.candidateId || !a.roleId) return;
-    const c = candidates.find(x => x.id === a.candidateId);
-    const role = ROLE_CATALOG.find(r => r.id === a.roleId);
+    const c = candidateById.get(a.candidateId);
+    const role = roleOf(a.roleId);
     if (!c || !role) return;
 
     if (
-      (role.level === 'bureau' || role.level === 'responsable') &&
+      isSeniorRole(cat, role) &&
       (c.availability <= 0.4 || c.alternance)
     ) {
       alerts.push({
@@ -123,8 +134,8 @@ export function detectAlerts({ candidates, assignments, poleTargets, poleSizes, 
   const byPole = {};
   assignments.forEach(a => {
     if (!a.candidateId || !a.roleId) return;
-    const c = candidates.find(x => x.id === a.candidateId);
-    const role = ROLE_CATALOG.find(r => r.id === a.roleId);
+    const c = candidateById.get(a.candidateId);
+    const role = roleOf(a.roleId);
     if (!c || !role) return;
     if (!byPole[role.pole]) byPole[role.pole] = { total: 0, lowAvail: 0 };
     byPole[role.pole].total++;
@@ -135,7 +146,7 @@ export function detectAlerts({ candidates, assignments, poleTargets, poleSizes, 
       alerts.push({
         severity: 'danger',
         code: 'pole_weak',
-        title: `Pôle "${pole}" fragile`,
+        title: `Pôle "${poleName(pole)}" fragile`,
         message: `Tous les membres ont une disponibilité faible (🎯/⚠️). Risque de blocage en cas d'imprévu.`,
         refs: [pole],
       });
@@ -143,23 +154,25 @@ export function detectAlerts({ candidates, assignments, poleTargets, poleSizes, 
   });
 
   // ---------- 7. Déséquilibre formation ↔ pôle ----------
-  // (Signal léger : un pôle Communication avec 0 InfoCOM)
+  // (Signal léger : un pôle à forte affinité InfoCOM — affinité 1.0 dans le
+  // catalogue, ex. Communication / Com. Interne — sans aucun profil InfoCOM)
   const poleFormation = {};
   assignments.forEach(a => {
     if (!a.candidateId || !a.roleId) return;
-    const c = candidates.find(x => x.id === a.candidateId);
-    const role = ROLE_CATALOG.find(r => r.id === a.roleId);
+    const c = candidateById.get(a.candidateId);
+    const role = roleOf(a.roleId);
     if (!c || !role) return;
     if (!poleFormation[role.pole]) poleFormation[role.pole] = new Set();
     poleFormation[role.pole].add(c.formation);
   });
-  ['Communication', 'Communication Interne'].forEach(pole => {
+  const infocomPoles = listPoles(cat).filter(p => (p.affinity?.InfoCOM ?? 0) >= 1).map(p => p.id);
+  infocomPoles.forEach(pole => {
     const formations = poleFormation[pole];
     if (formations && !formations.has('InfoCOM') && formations.size > 0) {
       alerts.push({
         severity: 'info',
         code: 'formation_mismatch',
-        title: `Aucun profil InfoCOM sur "${pole}"`,
+        title: `Aucun profil InfoCOM sur "${poleName(pole)}"`,
         message: `Ce pôle mériterait au moins un profil InfoCOM pour la cohérence pédagogique.`,
         refs: [pole],
       });
@@ -167,7 +180,8 @@ export function detectAlerts({ candidates, assignments, poleTargets, poleSizes, 
   });
 
   // ---------- 8. Présidence : plusieurs candidats (arbitrage) ----------
-  const presidentCandidates = candidates.filter(c => c.choices[0] === 'president');
+  // ('president' : id historique ; si le rôle a été supprimé, l'alerte disparaît)
+  const presidentCandidates = roleOf('president') ? candidates.filter(c => c.choices?.[0] === 'president') : [];
   if (presidentCandidates.length > 1) {
     alerts.push({
       severity: 'info',
@@ -206,8 +220,14 @@ export function groupAlerts(alerts) {
 
 /**
  * Score global de qualité du scénario (0-100) — utile pour comparer.
+ * 100 − (8 par alerte « danger », 3 par « warning », 1 par « info »), borné à 0.
+ * Ne dépend QUE des alertes : la taille de la promo est déjà prise en compte
+ * en amont (ex. sévérité de `candidates_unplaced`, seuil de `succession_risk`).
+ * L'ancien 2e paramètre `totalCandidates` (jamais utilisé) a été retiré ;
+ * un appel avec 2 arguments reste valide (argument ignoré).
+ * @param {import('./types.js').Alert[]} alerts
  */
-export function computeHealthScore(alerts, totalCandidates) {
+export function computeHealthScore(alerts) {
   let penalty = 0;
   alerts.forEach(a => {
     if (a.severity === 'danger') penalty += 8;

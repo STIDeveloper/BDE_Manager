@@ -1,236 +1,234 @@
-import { getRootFolder, PERMISSION_LEVELS } from '../store';
+// ============================================================
+// ANALYSEUR DRIVE — vérifications automatiques de la matrice
+// ============================================================
+// Module PUR : la sémantique des rôles vient du catalogue (paramètre
+// `catalog`, par défaut le catalogue actif). Aucun libellé de rôle ni nom
+// de pôle n'est codé en dur.
+//
+// Portée des règles :
+//  - 'cell'   : évaluée pour chaque couple (membre, dossier) ;
+//  - 'member' : une fois par membre ;
+//  - 'folder' : une fois par dossier.
+
+import { getActiveCatalog } from '../core/catalog.js';
+import { getRootFolder } from './folderTree.js';
+import {
+  memberRoleText, isBureauMember, memberPoleId, matchFolderPole,
+  presetKeyForMember, resolveMemberRole,
+} from './memberRoles.js';
+import { normalizeKey } from '../roleEngine/normalizer.js';
 
 const LEVEL_WEIGHT = { none: 0, reader: 1, commenter: 2, editor: 3 };
+
+const fullName = (m) => `${m.firstName || ''}${m.lastName ? ' ' + m.lastName : ''}`.trim();
+const roleOf = (ctx) => memberRoleText(ctx.member, ctx.catalog) || 'sans rôle';
+const isConfidential = (folder) => (folder.tags || []).includes('confidential');
+const presetOf = (ctx) => {
+  const key = presetKeyForMember(ctx.member, ctx.rolePresets, ctx.catalog);
+  return key ? ctx.rolePresets[key] : null;
+};
+// Dossier de trésorerie : id historique, ou nom contenant « trésorerie ».
+const isTreasuryFolder = (folder) =>
+  folder.id === 'f00.2' || /\btresorerie\b/.test(normalizeKey(folder.name));
 
 const RULES = [
   {
     id: 'confidential-editor-too-many',
+    scope: 'folder',
     severity: 'danger',
     title: 'Dossier confidentiel ouvert à trop de personnes',
-    description: (ctx) => `Le dossier "${ctx.folder.name}" est marqué confidentiel mais ${ctx.count} personnes ont un accès éditeur.`,
+    description: (ctx) => `Le dossier "${ctx.folder.name}" est marqué confidentiel mais ${ctx.editors.length} personnes ont un accès éditeur.`,
     fix: 'Vérifier si toutes ces personnes ont réellement besoin d\'un accès éditeur.',
-    test: (ctx) => {
-      const isConfidential = (ctx.folder.tags || []).includes('confidential');
-      if (!isConfidential) return false;
-      const count = ctx.permissionsForFolder.filter(p => p.level === 'editor').length;
-      return count >= 4;
-    },
-    data: (ctx) => {
-      const members = ctx.permissionsForFolder
-        .filter(p => p.level === 'editor')
-        .map(p => p.member);
-      return { members, count: members.length, folder: ctx.folder };
-    },
+    test: (ctx) => isConfidential(ctx.folder) && ctx.editors.length >= 4,
+    data: (ctx) => ({ members: ctx.editors.map(p => p.member), count: ctx.editors.length, folder: ctx.folder }),
   },
   {
     id: 'confidential-non-bureau',
+    scope: 'cell',
     severity: 'warning',
     title: 'Non-membre du Bureau avec accès éditeur sur un dossier confidentiel',
-    description: (ctx) => `${ctx.member.firstName} ${ctx.member.lastName} (${ctx.member.mainRole}) a un accès éditeur sur "${ctx.folder.name}" qui est confidentiel, mais son rôle n'est pas dans le Bureau.`,
+    description: (ctx) => `${fullName(ctx.member)} (${roleOf(ctx)}) a un accès éditeur sur "${ctx.folder.name}" qui est confidentiel, mais son rôle n'est pas un rôle du Bureau.`,
     fix: 'Vérifier si son accès est justifié ou s\'il devrait être en lecteur.',
-    test: (ctx) => {
-      const isConfidential = (ctx.folder.tags || []).includes('confidential');
-      if (!isConfidential) return false;
-      const bureauRoles = ['Président', 'Vice-Président', 'Trésorier', 'Secrétaire Général'];
-      return !bureauRoles.includes(ctx.member.mainRole) && ctx.level === 'editor';
-    },
+    test: (ctx) => ctx.level === 'editor' && isConfidential(ctx.folder) && !isBureauMember(ctx.member, ctx.catalog),
     data: (ctx) => ({ member: ctx.member, folder: ctx.folder, level: ctx.level }),
   },
   {
     id: 'editor-out-of-pole',
+    scope: 'cell',
     severity: 'warning',
     title: 'Accès éditeur sur un dossier hors de son pôle',
-    description: (ctx) => `${ctx.member.firstName} ${ctx.member.lastName} (${ctx.member.mainRole}) a un accès éditeur sur "${ctx.folder.name}" qui appartient au ${ctx.root.name}.`,
-    fix: 'Un accès éditeur devrait être limité au pôle de rattachement, sauf exception justifiée.',
+    description: (ctx) => `${fullName(ctx.member)} (${roleOf(ctx)}) a un accès éditeur sur "${ctx.folder.name}" qui appartient à « ${ctx.root.name} ».`,
+    fix: 'Un accès éditeur devrait être limité au pôle de rattachement, sauf exception justifiée (dans ce cas, ajoute-la au preset du rôle).',
     test: (ctx) => {
       if (ctx.level !== 'editor') return false;
-      const memberPole = getMemberPoleFromRole(ctx.member.mainRole);
+      // Les dossiers confidentiels sont couverts par la règle dédiée.
+      if (isConfidential(ctx.folder)) return false;
+      // Le Bureau supervise tous les pôles.
+      if (isBureauMember(ctx.member, ctx.catalog)) return false;
+      const memberPole = memberPoleId(ctx.member, ctx.catalog);
       if (!memberPole) return false;
-      const folderPole = ctx.root.code;
-      if (['00'].includes(folderPole)) return false;
-      return memberPole !== folderPole;
+      const folderPole = matchFolderPole(ctx.root, ctx.catalog);
+      if (!folderPole || folderPole === memberPole) return false;
+      // Accès explicitement prévu par le preset du rôle → politique assumée.
+      return presetOf(ctx)?.[ctx.folder.id] !== 'editor';
     },
     data: (ctx) => ({ member: ctx.member, folder: ctx.folder, root: ctx.root, level: ctx.level }),
   },
   {
     id: 'permission-outside-preset',
+    scope: 'cell',
     severity: 'info',
     title: 'Permission non prévue par le preset du rôle',
-    description: (ctx) => `${ctx.member.firstName} (${ctx.member.mainRole}) a une permission "${ctx.level}" sur "${ctx.folder.name}" alors que son preset ne la prévoit pas.`,
+    description: (ctx) => `${fullName(ctx.member)} (${roleOf(ctx)}) a une permission "${ctx.level}" sur "${ctx.folder.name}" alors que le preset de son rôle ne la prévoit pas.`,
     fix: 'Soit le preset doit être mis à jour, soit cette permission est en trop.',
     test: (ctx) => {
-      const preset = ctx.rolePresets[ctx.member.mainRole];
+      if (ctx.level === 'none') return false;
+      const preset = presetOf(ctx);
       if (!preset) return false;
-      const expected = preset[ctx.folder.id] || 'none';
-      return expected === 'none' && ctx.level !== 'none';
+      return (preset[ctx.folder.id] || 'none') === 'none';
     },
     data: (ctx) => ({ member: ctx.member, folder: ctx.folder, level: ctx.level }),
   },
   {
     id: 'member-no-permissions',
+    scope: 'member',
     severity: 'info',
     title: 'Membre sans aucune permission Drive',
-    description: (ctx) => `${ctx.member.firstName} ${ctx.member.lastName} (${ctx.member.mainRole}) n'a accès à aucun dossier.`,
-    fix: 'Appliquer un preset ou définir manuellement ses accès.',
+    description: (ctx) => `${fullName(ctx.member)} (${roleOf(ctx)}) n'a accès à aucun dossier.`,
+    fix: 'Appliquer le preset de son rôle ou définir manuellement ses accès.',
     test: (ctx) => {
       if (!ctx.member.mainRole) return false;
       const userPerms = ctx.drivePermissions[ctx.member.id] || {};
-      const count = Object.values(userPerms).filter(v => v !== 'none').length;
-      return count === 0;
+      return Object.values(userPerms).filter(v => v && v !== 'none').length === 0;
     },
     data: (ctx) => ({ member: ctx.member }),
   },
   {
-    id: 'parent-child-incoherence',
-    severity: 'warning',
-    title: 'Permission incohérente parent/enfant',
-    description: (ctx) => `${ctx.member.firstName} a un accès "${ctx.childLevel}" sur "${ctx.child.name}" mais un accès "${ctx.parentLevel}" sur le dossier parent "${ctx.parent.name}".`,
-    fix: 'L\'enfant devrait généralement avoir un niveau ≤ au parent.',
-    test: (ctx) => {
-      const userPerms = ctx.drivePermissions[ctx.member.id] || {};
-      const childLevel = userPerms[ctx.folder.id] || 'none';
-      if (childLevel === 'none') return false;
-      if (!ctx.folder.parent) return false;
-      const parent = ctx.folders.find(f => f.id === ctx.folder.parent);
-      if (!parent) return false;
-      const parentLevel = userPerms[parent.id] || 'none';
-      if (parentLevel === 'none') return false;
-      return LEVEL_WEIGHT[childLevel] > LEVEL_WEIGHT[parentLevel];
-    },
-    data: (ctx) => {
-      const userPerms = ctx.drivePermissions[ctx.member.id] || {};
-      const parent = ctx.folders.find(f => f.id === ctx.folder.parent);
-      return {
-        member: ctx.member,
-        child: ctx.folder,
-        parent,
-        childLevel: userPerms[ctx.folder.id],
-        parentLevel: userPerms[parent.id],
-      };
-    },
+    id: 'member-unknown-role',
+    scope: 'member',
+    severity: 'info',
+    title: 'Rôle hors catalogue',
+    description: (ctx) => `${fullName(ctx.member)} a pour rôle « ${ctx.member.mainRole} », qui ne correspond à aucun rôle du catalogue.`,
+    fix: 'Associe ce membre à un rôle du catalogue (fiche membre) pour que les presets et vérifications s\'appliquent.',
+    test: (ctx) => !!ctx.member.mainRole && !resolveMemberRole(ctx.member, ctx.catalog),
+    data: (ctx) => ({ member: ctx.member }),
   },
   {
-    id: 'trésorerie-too-open',
+    id: 'parent-child-incoherence',
+    scope: 'cell',
+    severity: 'warning',
+    title: 'Permission incohérente parent/enfant',
+    description: (ctx) => `${fullName(ctx.member)} a un accès "${ctx.level}" sur "${ctx.folder.name}" mais un accès "${ctx.parentLevel}" sur le dossier parent "${ctx.parent.name}".`,
+    fix: 'L\'enfant devrait généralement avoir un niveau ≤ au parent.',
+    test: (ctx) => {
+      if (ctx.level === 'none' || !ctx.folder.parent) return false;
+      const parent = ctx.folders.find(f => f.id === ctx.folder.parent);
+      if (!parent) return false;
+      const parentLevel = (ctx.drivePermissions[ctx.member.id] || {})[parent.id] || 'none';
+      if (parentLevel === 'none') return false;
+      ctx.parent = parent;
+      ctx.parentLevel = parentLevel;
+      return LEVEL_WEIGHT[ctx.level] > LEVEL_WEIGHT[parentLevel];
+    },
+    data: (ctx) => ({
+      member: ctx.member, child: ctx.folder, parent: ctx.parent,
+      childLevel: ctx.level, parentLevel: ctx.parentLevel,
+    }),
+  },
+  {
+    id: 'tresorerie-too-open',
+    scope: 'folder',
     severity: 'danger',
     title: 'Dossier Trésorerie accessible par trop de personnes',
-    description: (ctx) => `Le dossier "${ctx.folder.name}" est accessible par ${ctx.count} personnes, ce qui est très sensible.`,
-    fix: 'Le dossier Trésorerie ne devrait être accessible qu\'au Trésorier, Président et VP.',
-    test: (ctx) => {
-      if (ctx.folder.id !== 'f00.2') return false;
-      const count = ctx.permissionsForFolder.filter(p => p.level !== 'none').length;
-      return count > 4;
-    },
-    data: (ctx) => {
-      const members = ctx.permissionsForFolder.map(p => ({ member: p.member, level: p.level }));
-      return { members, count: members.length, folder: ctx.folder };
-    },
+    description: (ctx) => `Le dossier "${ctx.folder.name}" est accessible par ${ctx.withAccess.length} personnes, ce qui est très sensible.`,
+    fix: 'Le dossier Trésorerie ne devrait être accessible qu\'aux quelques postes du Bureau qui en ont besoin.',
+    test: (ctx) => isTreasuryFolder(ctx.folder) && ctx.withAccess.length > 4,
+    data: (ctx) => ({
+      members: ctx.withAccess.map(p => p.member),
+      count: ctx.withAccess.length,
+      folder: ctx.folder,
+    }),
   },
   {
     id: 'folder-empty',
+    scope: 'folder',
     severity: 'info',
     title: 'Dossier sans aucun accès configuré',
     description: (ctx) => `Le dossier "${ctx.folder.name}" n'a aucun utilisateur ayant une permission.`,
     fix: 'Vérifier qu\'il n\'a pas été oublié ou qu\'il est bien volontairement vide.',
     test: (ctx) => {
-      if (ctx.folder.parent === null && ctx.folder.id === 'f04') return false;
-      const count = ctx.permissionsForFolder.filter(p => p.level !== 'none').length;
-      const hasChildren = ctx.folders.some(f => f.parent === ctx.folder.id);
-      if (hasChildren) return false;
-      return count === 0;
+      if (ctx.folder.parent == null && ctx.folder.id === 'f04') return false;
+      if (ctx.folders.some(f => f.parent === ctx.folder.id)) return false;
+      return ctx.withAccess.length === 0;
     },
     data: (ctx) => ({ folder: ctx.folder }),
   },
 ];
 
-function getMemberPoleFromRole(role) {
-  if (!role) return null;
-  if (role.startsWith('Respo Com') || role.startsWith('Respo Insta') || role.startsWith('Respo TikTok')) return '01';
-  if (role.startsWith('Respo Event') || role.startsWith('Respo Sport')) return '02';
-  if (role.startsWith('Respo Partenariat')) return '03';
-  return null;
-}
+const SEVERITY_ORDER = { danger: 0, warning: 1, info: 2 };
 
-export function analyzeDriveState({ members, folders, drivePermissions, rolePresets }) {
+/** Liste des identifiants de règles (documentation / tests). */
+export const RULE_IDS = RULES.map(r => r.id);
+
+/**
+ * Analyse la matrice et retourne les alertes triées par gravité.
+ * @param {{members: object[], folders: object[], drivePermissions: object, rolePresets: object}} state
+ * @param {{poles: object, levels: object, roles: object}} [catalog]
+ */
+export function analyzeDriveState(
+  { members = [], folders = [], drivePermissions = {}, rolePresets = {} },
+  catalog = getActiveCatalog(),
+) {
   const alerts = [];
-  const baseCtx = { members, folders, drivePermissions, rolePresets };
+  const base = { members, folders, drivePermissions, rolePresets, catalog };
 
-  const permissionsByFolder = {};
-  folders.forEach(f => {
-    permissionsByFolder[f.id] = members
-      .map(m => ({
-        member: m,
-        level: (drivePermissions[m.id] || {})[f.id] || 'none',
-      }))
-      .filter(p => p.level !== 'none');
-  });
-
-  members.forEach(m => {
-    folders.forEach(f => {
-      const level = (drivePermissions[m.id] || {})[f.id] || 'none';
-      const root = getRootFolder(f, folders);
-
-      const ctx = {
-        ...baseCtx, member: m, folder: f, root, level,
-        permissionsForFolder: permissionsByFolder[f.id] || [],
-      };
-
-      RULES.forEach(rule => {
-        try {
-          if (rule.test(ctx)) {
-            alerts.push({
-              id: `${rule.id}-${m.id}-${f.id}`,
-              ruleId: rule.id,
-              severity: rule.severity,
-              title: rule.title,
-              description: rule.description(ctx),
-              fix: rule.fix,
-              data: rule.data(ctx),
-              memberId: m.id,
-              folderId: f.id,
-            });
-          }
-        } catch (err) { console.warn(`Règle ${rule.id} :`, err); }
+  const run = (rule, ctx, id, extra) => {
+    try {
+      if (!rule.test(ctx)) return;
+      alerts.push({
+        id,
+        ruleId: rule.id,
+        severity: rule.severity,
+        title: rule.title,
+        description: rule.description(ctx),
+        fix: rule.fix,
+        data: rule.data(ctx),
+        ...extra,
       });
-    });
-  });
+    } catch (err) {
+      console.warn(`Règle ${rule.id} :`, err);
+    }
+  };
 
-  folders.forEach(f => {
-    const root = getRootFolder(f, folders);
+  const byScope = (scope) => RULES.filter(r => r.scope === scope);
+  const roots = new Map(folders.map(f => [f.id, getRootFolder(f, folders)]));
+
+  // Règles par dossier
+  folders.forEach(folder => {
+    const withAccess = members
+      .map(m => ({ member: m, level: (drivePermissions[m.id] || {})[folder.id] || 'none' }))
+      .filter(p => p.level !== 'none');
     const ctx = {
-      ...baseCtx, folder: f, root,
-      permissionsForFolder: permissionsByFolder[f.id] || [],
+      ...base, folder, root: roots.get(folder.id), withAccess,
+      editors: withAccess.filter(p => p.level === 'editor'),
     };
+    byScope('folder').forEach(rule => run(rule, ctx, `${rule.id}-${folder.id}`, { folderId: folder.id }));
+  });
 
-    RULES.forEach(rule => {
-      if (rule.id.includes('member-') || rule.id.includes('parent-child')) return;
-      if (rule.id === 'confidential-editor-too-many' || rule.id === 'trésorerie-too-open' || rule.id === 'folder-empty') {
-        try {
-          if (rule.test(ctx)) {
-            alerts.push({
-              id: `${rule.id}-${f.id}`,
-              ruleId: rule.id,
-              severity: rule.severity,
-              title: rule.title,
-              description: rule.description(ctx),
-              fix: rule.fix,
-              data: rule.data(ctx),
-              folderId: f.id,
-            });
-          }
-        } catch (err) { console.warn(`Règle globale ${rule.id} :`, err); }
-      }
+  // Règles par membre et par cellule
+  members.forEach(member => {
+    const mctx = { ...base, member };
+    byScope('member').forEach(rule => run(rule, mctx, `${rule.id}-${member.id}`, { memberId: member.id }));
+
+    const userPerms = drivePermissions[member.id] || {};
+    folders.forEach(folder => {
+      const ctx = { ...mctx, folder, root: roots.get(folder.id), level: userPerms[folder.id] || 'none' };
+      byScope('cell').forEach(rule =>
+        run(rule, ctx, `${rule.id}-${member.id}-${folder.id}`, { memberId: member.id, folderId: folder.id }));
     });
   });
 
-  const seen = new Set();
-  const unique = alerts.filter(a => {
-    if (seen.has(a.id)) return false;
-    seen.add(a.id);
-    return true;
-  });
-
-  const order = { danger: 0, warning: 1, info: 2 };
-  return unique.sort((a, b) => order[a.severity] - order[b.severity]);
+  return alerts.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
 }
 
 export function simulateMemberView(memberId, folders, drivePermissions) {
@@ -241,7 +239,7 @@ export function simulateMemberView(memberId, folders, drivePermissions) {
     if (direct) return { level: direct, source: 'direct' };
     let current = folders.find(f => f.id === folderId);
     let safety = 0;
-    while (current && current.parent && safety < 10) {
+    while (current && current.parent && safety < 50) {
       const parent = folders.find(f => f.id === current.parent);
       if (!parent) break;
       const parentLevel = userPerms[parent.id];

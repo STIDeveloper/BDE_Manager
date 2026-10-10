@@ -22,14 +22,17 @@
  */
 
 /**
+ * Rôle du catalogue (source de vérité : src/core/catalog.js).
  * @typedef {Object} Role
- * @property {string} id            Slug interne, ex. "membre_communication"
- * @property {string} label         Libellé affiché
- * @property {'bureau'|'responsable'|'adjoint'|'membre'} level
- * @property {string} pole          'Bureau'|'Communication'|'Communication Interne'|'Projets'|'Sport'|'E-Sport'|'Partenariats'
+ * @property {string} id            Slug interne IMMUABLE, ex. "membre_communication"
+ * @property {string} label         Libellé affiché (renommable)
+ * @property {string} level         ID de niveau (comportement moteur : levelKind(catalog, level))
+ * @property {string} pole          ID de pôle, ex. 'communication' (libellé : poleLabelIn(catalog, pole))
  * @property {number} capacity
- * @property {number} minRequirement  Exigence de dispo (0..1)
  * @property {boolean} leadership
+ * @property {boolean} essential
+ * @property {number} order
+ * @property {string[]} aliases     Libellés alternatifs reconnus à l'import CSV
  */
 
 /**
@@ -81,7 +84,8 @@
  * @property {number} globalScore
  * @property {number} avgSatisfaction
  * @property {number} worstSatisfaction
- * @property {Object} poleSizes       { Communication: 5, ... }
+ * @property {Object} poleSizes       { communication: 5, ... } (clés = ids de pôle)
+ * @property {Object} poleTargets     { communication: 4, ... } (clés = ids de pôle)
  * @property {Alert[]} alerts
  */
 
@@ -91,7 +95,7 @@
  * @property {string} code
  * @property {string} title
  * @property {string} message
- * @property {string[]} [refs]        IDs candidats / rôles concernés
+ * @property {string[]} [refs]        IDs candidats / rôles / pôles concernés
  */
 
 export {};

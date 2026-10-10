@@ -1,6 +1,7 @@
-import { DEFAULT_WEIGHTS, DEFAULT_PENALTIES, DEFAULT_MIN_SCORE } from './config.js';
-import { ROLE_CATALOG } from './config.js';
-import { buildSlots } from './roles.js';
+import {
+  DEFAULT_WEIGHTS, DEFAULT_PENALTIES, DEFAULT_MIN_SCORE, resolveCatalog, getCatalogRoles,
+} from './config.js';
+import { DEFAULT_CONSTRAINTS } from './constraints.js';
 import { buildScoreMatrix } from './scoring.js';
 import { runSolver } from './solver.js';
 import { mulberry32 } from './normalizer.js';
@@ -20,6 +21,8 @@ import { mulberry32 } from './normalizer.js';
  * @param {number} [params.seed]
  * @param {number} [params.minScore]
  * @param {Set<string>} [params.lockedPairs]
+ * @param {object} [params.constraints]  Contraintes manuelles (appliquées à chaque tirage)
+ * @param {object} [params.catalog]      défaut : catalogue actif
  * @returns {{
  *   stability: Map<string, number>,   // "candidateId:roleId" → fréquence 0..1
  *   perCandidate: Map<string, number>,// candidateId → stabilité moyenne sur son poste actuel
@@ -37,13 +40,17 @@ export function analyzeStability({
   seed = 0xBDE_2026,
   minScore = DEFAULT_MIN_SCORE,
   lockedPairs = new Set(),
+  constraints = DEFAULT_CONSTRAINTS,
+  catalog,
 }) {
   const rng = mulberry32(seed);
-  const slots = buildSlots(capacities);
+  const cat = resolveCatalog(catalog);
+  const roles = getCatalogRoles(cat);
+  const solverOpts = { minScore, lockedPairs, catalog: cat };
 
   // Baseline
-  const baselineMatrix = buildScoreMatrix(candidates, ROLE_CATALOG, weights, penalties);
-  const baseline = runSolver(candidates, capacities, baselineMatrix, { minScore, lockedPairs });
+  const baselineMatrix = buildScoreMatrix(candidates, roles, weights, penalties, constraints, cat);
+  const baseline = runSolver(candidates, capacities, baselineMatrix, solverOpts);
 
   // Map baseline : candidateId → roleId
   const baselineRole = new Map();
@@ -76,8 +83,8 @@ export function analyzeStability({
       p[k] = Math.max(0, p[k] * (1 + delta));
     });
 
-    const matrix = buildScoreMatrix(candidates, ROLE_CATALOG, w, p);
-    const run = runSolver(candidates, capacities, matrix, { minScore, lockedPairs });
+    const matrix = buildScoreMatrix(candidates, roles, w, p, constraints, cat);
+    const run = runSolver(candidates, capacities, matrix, solverOpts);
 
     run.assignments.forEach(a => {
       if (!a.candidateId || !a.roleId) return;
@@ -160,9 +167,9 @@ export function detectBlockingPairs({ candidates, assignments, scoreMatrix }) {
     if (!current || !current.roleId) return;
 
     // Rôles pour lesquels le candidat serait meilleur que l'actuel titulaire
-    c.choices.forEach(roleId => {
+    (c.choices || []).forEach(roleId => {
       if (roleId === current.roleId) return;
-      const myScore = scoreMatrix.get(c.id).get(roleId)?.total || 0;
+      const myScore = scoreMatrix.get(c.id)?.get(roleId)?.total || 0;
       if (myScore < 60) return;
 
       const holders = byRole.get(roleId) || [];

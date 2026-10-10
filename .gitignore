@@ -13,3 +13,7 @@ npm-debug.log*
 coverage
 
 .vercel
+
+# PWA (vite-plugin-pwa en mode dev) & divers
+dev-dist
+*.tsbuildinfo

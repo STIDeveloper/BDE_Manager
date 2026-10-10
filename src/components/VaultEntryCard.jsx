@@ -1,80 +1,144 @@
-import React, { useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Eye, EyeOff, Copy, Pencil, Trash2, Check } from 'lucide-react';
-import { ENTRY_TYPES, useStore } from '../store';
+import { ENTRY_TYPES } from '../store';
 import { toast } from './ui/toastStore';
 
-export default function VaultEntryCard({ entry, onEdit }) {
-  const { deleteVaultEntry } = useStore();
+const AUTO_REMASK_MS = 30_000;
+
+function getEntryType(typeId) {
+  return ENTRY_TYPES.find(t => t.id === typeId) || ENTRY_TYPES[ENTRY_TYPES.length - 1];
+}
+
+function formatDate(d) {
+  if (!d) return null;
+  const date = new Date(d);
+  if (Number.isNaN(date.getTime())) return String(d);
+  return date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+}
+
+/**
+ * Carte d'une entrée du coffre.
+ * Les valeurs sensibles sont masquées par défaut, ré-masquées automatiquement
+ * après 30 s, et l'état "révélé" disparaît avec la carte (démontage = masquée).
+ */
+export default function VaultEntryCard({ entry, onEdit, onDelete }) {
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef(null);
+  const valueId = useId();
 
-  const type = ENTRY_TYPES.find(t => t.id === entry.type) || ENTRY_TYPES[ENTRY_TYPES.length - 1];
-  const isSensitive = type.sensitive;
+  const type = getEntryType(entry.type);
+  const isSensitive = !!type.sensitive;
+  const masked = isSensitive && !revealed;
+  const label = entry.label || 'Sans titre';
+  const value = entry.value ?? '';
+
+  // Ré-masquage automatique après un délai
+  useEffect(() => {
+    if (!revealed) return undefined;
+    const id = setTimeout(() => setRevealed(false), AUTO_REMASK_MS);
+    return () => clearTimeout(id);
+  }, [revealed]);
+
+  useEffect(() => () => clearTimeout(copiedTimer.current), []);
 
   const copyValue = async () => {
     try {
-      await navigator.clipboard.writeText(entry.value);
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard API indisponible');
+      await navigator.clipboard.writeText(value);
       setCopied(true);
-      toast.success('Copié dans le presse-papiers');
-      setTimeout(() => setCopied(false), 1500);
-    } catch (err) {
-      toast.error('Copie impossible');
+      clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), 1500);
+      toast.success(
+        isSensitive ? 'Pense à vider ton presse-papiers après usage.' : 'Copié dans le presse-papiers',
+        isSensitive ? `${label} copié` : undefined
+      );
+    } catch {
+      toast.error('Copie impossible (autorisation du navigateur refusée ?)');
     }
   };
 
-  const handleDelete = () => {
-    if (window.confirm(`Supprimer "${entry.label}" du coffre-fort ?`)) {
-      deleteVaultEntry(entry.id);
-      toast.info('Entrée supprimée', entry.label);
-    }
-  };
-
-  const formatDate = (d) => {
-    if (!d) return null;
-    try {
-      return new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
-    } catch { return d; }
-  };
+  const reminder = type.hasDate && entry.date ? formatDate(entry.date) : null;
 
   return (
-    <div className="bg-surface border border-line rounded-xl p-4 hover:border-dim transition-colors">
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-3">
-          <div className="bg-elevated p-2 rounded-lg text-xl">{type.icon}</div>
-          <div>
-            <h3 className="font-bold text-ink">{entry.label}</h3>
+    <article className="bg-surface border border-line rounded-xl p-4 hover:border-dim transition-colors min-w-0">
+      <div className="flex items-start justify-between gap-2 mb-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="bg-elevated p-2 rounded-lg text-xl shrink-0" aria-hidden="true">{type.icon}</div>
+          <div className="min-w-0">
+            <h3 className="font-bold text-ink truncate">{label}</h3>
             <span className="text-[10px] uppercase tracking-wider text-dim font-semibold">{type.label}</span>
           </div>
         </div>
-        <div className="flex gap-1">
-          <button onClick={() => onEdit(entry)} className="text-dim hover:text-blue-500 p-1.5 transition-colors" title="Modifier">
-            <Pencil size={14} />
+        <div className="flex gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => onEdit(entry)}
+            className="text-dim hover:text-blue-500 p-2 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+            aria-label={`Modifier « ${label} »`}
+            title="Modifier"
+          >
+            <Pencil size={14} aria-hidden="true" />
           </button>
-          <button onClick={handleDelete} className="text-dim hover:text-red-500 p-1.5 transition-colors" title="Supprimer">
-            <Trash2 size={14} />
+          <button
+            type="button"
+            onClick={() => onDelete(entry)}
+            className="text-dim hover:text-red-500 p-2 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500/40"
+            aria-label={`Supprimer « ${label} »`}
+            title="Supprimer"
+          >
+            <Trash2 size={14} aria-hidden="true" />
           </button>
         </div>
       </div>
 
-      <div className="bg-base border border-line rounded-lg p-3 flex items-center gap-2">
-        <code className={`flex-1 text-sm truncate ${isSensitive && !revealed ? 'tracking-widest text-dim' : 'text-emerald-600 dark:text-emerald-400 font-mono'}`}>
-          {isSensitive && !revealed ? '••••••••••••' : entry.value}
-        </code>
+      <div className="bg-base border border-line rounded-lg p-2 pl-3 flex items-center gap-1">
+        {masked ? (
+          <code id={valueId} className="flex-1 text-sm tracking-widest text-dim select-none" aria-label="Valeur masquée">
+            ••••••••••••
+          </code>
+        ) : (
+          <code
+            id={valueId}
+            className={`flex-1 min-w-0 text-sm font-mono text-emerald-600 dark:text-emerald-400 ${
+              entry.type === 'note' ? 'whitespace-pre-wrap break-words max-h-40 overflow-y-auto' : 'truncate'
+            }`}
+            title={entry.type === 'note' ? undefined : value}
+          >
+            {value}
+          </code>
+        )}
         {isSensitive && (
-          <button onClick={() => setRevealed(!revealed)} className="text-dim hover:text-ink p-1 transition-colors">
-            {revealed ? <EyeOff size={14} /> : <Eye size={14} />}
+          <button
+            type="button"
+            onClick={() => setRevealed(r => !r)}
+            className="text-dim hover:text-ink p-2 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500/40"
+            aria-label={revealed ? `Masquer la valeur de « ${label} »` : `Afficher la valeur de « ${label} »`}
+            aria-pressed={revealed}
+            aria-controls={valueId}
+            title={revealed ? 'Masquer' : 'Afficher (30 s)'}
+          >
+            {revealed ? <EyeOff size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}
           </button>
         )}
-        <button onClick={copyValue} className="text-dim hover:text-ink p-1 transition-colors">
-          {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+        <button
+          type="button"
+          onClick={copyValue}
+          className="text-dim hover:text-ink p-2 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500/40"
+          aria-label={`Copier la valeur de « ${label} »`}
+          title="Copier"
+        >
+          {copied ? <Check size={14} className="text-emerald-500" aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
         </button>
       </div>
 
-      {type.hasDate && entry.date && (
-        <div className="mt-2 text-xs text-amber-500 flex items-center gap-1">⏰ Rappel : {formatDate(entry.date)}</div>
+      {reminder && (
+        <div className="mt-2 text-xs text-amber-500 flex items-center gap-1">
+          <span aria-hidden="true">⏰</span> Rappel : {reminder}
+        </div>
       )}
 
-      {entry.notes && <p className="mt-2 text-xs text-dim italic">{entry.notes}</p>}
-    </div>
+      {entry.notes && <p className="mt-2 text-xs text-dim italic whitespace-pre-wrap break-words">{entry.notes}</p>}
+    </article>
   );
 }

@@ -1,4 +1,11 @@
-export function generateAppsScript({ members, folders, drivePermissions, folderIdsByCode = {} }) {
+import { getActiveCatalog } from '../core/catalog.js';
+import { memberRoleText } from './memberRoles.js';
+
+// Commentaire JS sur une ligne : aucune donnée utilisateur ne peut sortir du
+// commentaire (retours à la ligne, fin de commentaire bloc).
+const safeComment = (s) => String(s ?? '').replace(/[\r\n\u2028\u2029]+/g, ' ').replace(/\*\//g, '* /');
+
+export function generateAppsScript({ members, folders, drivePermissions, folderIdsByCode = {} }, catalog = getActiveCatalog()) {
   const ordered = (function () {
     const result = [];
     const addBranch = (parentId) => {
@@ -13,7 +20,7 @@ export function generateAppsScript({ members, folders, drivePermissions, folderI
   const foldersTable = ordered.map(f => ({
     code: f.code,
     name: f.name,
-    id: folderIdsByCode[f.id] || folderIdsByCode[f.code] || `TODO_ID_${f.code.replace(/\./g, '_')}`,
+    id: folderIdsByCode[f.id] || folderIdsByCode[f.code] || `TODO_ID_${String(f.code).replace(/[^a-zA-Z0-9]/g, '_')}`,
   }));
 
   const membersTable = members
@@ -28,7 +35,7 @@ export function generateAppsScript({ members, folders, drivePermissions, folderI
       return {
         name: `${m.firstName}${m.lastName ? ' ' + m.lastName : ''}`,
         email: m.email.trim(),
-        role: m.mainRole || '',
+        role: memberRoleText(m, catalog),
         permissions: perms,
       };
     });
@@ -54,7 +61,7 @@ export function generateAppsScript({ members, folders, drivePermissions, folderI
  */
 
 const FOLDERS_ID = {
-${foldersTable.map(f => `  '${f.code}': '${f.id}',  // ${f.name}`).join('\n')}
+${foldersTable.map(f => `  ${JSON.stringify(String(f.code))}: ${JSON.stringify(String(f.id))},  // ${safeComment(f.name)}`).join('\n')}
 };
 
 const MEMBERS = ${JSON.stringify(membersTable, null, 2)};
@@ -165,7 +172,7 @@ export function generateInstructionsText({ membersTable, foldersTable, membersWi
     lines.push('');
     lines.push('⚠️ MEMBRES SANS EMAIL (à compléter) :');
     membersWithoutEmail.forEach(m => {
-      lines.push(`  - ${m.firstName} ${m.lastName || ''} (${m.mainRole || 'Sans rôle'})`);
+      lines.push(`  - ${m.firstName} ${m.lastName || ''} (${memberRoleText(m) || 'Sans rôle'})`);
     });
   }
   return lines.join('\n');

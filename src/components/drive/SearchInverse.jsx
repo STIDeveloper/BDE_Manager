@@ -1,14 +1,20 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { Search, Folder, User, X, ChevronRight } from 'lucide-react';
 import {
   useStore, PERMISSION_LEVELS, FOLDER_COLORS,
-  getFolderColor, getRootFolder, getFolderTag,
+  getFolderColor, getFolderTag,
 } from '../../store';
+import { memberRoleLabel } from '../../core/useCatalog';
 
 const LEVEL_ORDER = { editor: 0, commenter: 1, reader: 2, none: 3 };
 
 export default function SearchInverse() {
-  const { members, folders, folderTags, drivePermissions } = useStore();
+  const members = useStore(s => s.members);
+  const folders = useStore(s => s.folders);
+  const folderTags = useStore(s => s.folderTags);
+  const drivePermissions = useStore(s => s.drivePermissions);
+  const roles = useStore(s => s.roles);
+  const roleText = (m) => memberRoleLabel(m, roles) || 'Sans rôle';
   const [mode, setMode] = useState('folder');
   const [folderQuery, setFolderQuery] = useState('');
   const [memberQuery, setMemberQuery] = useState('');
@@ -200,7 +206,7 @@ export default function SearchInverse() {
                         }`}>
                           <div className="min-w-0">
                             <div className="text-sm font-medium text-ink truncate">{member.firstName} {member.lastName}</div>
-                            <div className="text-[10px] text-dim truncate">{member.mainRole || 'Sans rôle'}</div>
+                            <div className="text-[10px] text-dim truncate">{roleText(member)}</div>
                           </div>
                           <span className={`text-[10px] px-2 py-0.5 rounded font-bold shrink-0 ${l.bg} ${l.text}`}>
                             {level === 'none' ? '—' : l.label}
@@ -249,7 +255,7 @@ export default function SearchInverse() {
                         <div className={`text-sm font-medium truncate ${isSelected ? 'text-purple-500' : 'text-ink'}`}>
                           {m.firstName} {m.lastName}
                         </div>
-                        <div className="text-[10px] text-dim truncate">{m.mainRole}</div>
+                        <div className="text-[10px] text-dim truncate">{roleText(m)}</div>
                       </div>
                     </button>
                   );
@@ -270,7 +276,7 @@ export default function SearchInverse() {
                   <div>
                     <h3 className="text-lg font-bold text-ink">{selectedMember.firstName} {selectedMember.lastName}</h3>
                     <span className="text-xs text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-md font-semibold inline-block mt-1">
-                      {selectedMember.mainRole || 'Sans rôle'}
+                      {roleText(selectedMember)}
                     </span>
                   </div>
                   <button onClick={() => { setSelectedMemberId(null); setMemberQuery(''); }}

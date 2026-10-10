@@ -1,6 +1,8 @@
-import React from 'react';
-import { AlertTriangle, AlertCircle, Info, Bell, Users } from 'lucide-react';
+import { useMemo } from 'react';
+import { AlertTriangle, AlertCircle, Info, Bell } from 'lucide-react';
 import { useRolesStore } from '../../roleEngine/store.js';
+import { useCatalogMaps } from '../../core/useCatalog.js';
+import { refLabel } from './scenarioStats.js';
 
 const SEVERITY = {
   danger:  { icon: AlertTriangle, bg: 'bg-red-500/5',     border: 'border-red-500/30',     text: 'text-red-500',     label: 'Critique' },
@@ -9,10 +11,14 @@ const SEVERITY = {
 };
 
 export default function AlertsPanel() {
-  const { getSelectedScenario, candidates } = useRolesStore();
-  const scenario = getSelectedScenario();
+  const scenario = useRolesStore(s => s.scenarios[s.selectedScenarioIndex] || null);
+  const candidates = useRolesStore(s => s.candidates);
+  const catalog = useCatalogMaps();
+  const candidatesById = useMemo(() => new Map(candidates.map(c => [c.id, c])), [candidates]);
 
-  if (!scenario) return null;
+  if (!scenario) {
+    return <div className="text-center py-16 text-dim text-sm">Aucun scénario disponible. Importe d'abord un CSV.</div>;
+  }
 
   const grouped = {
     danger: scenario.alerts.filter(a => a.severity === 'danger'),
@@ -56,11 +62,13 @@ export default function AlertsPanel() {
 
       <div className="space-y-2">
         {['danger', 'warning', 'info'].flatMap(sev =>
-          grouped[sev].map((alert, idx) => {
+          grouped[sev].map((alert) => {
             const meta = SEVERITY[sev];
             const Icon = meta.icon;
+            // Clé stable : code + références (pas d'index : la liste change à chaque recalcul)
+            const key = `${alert.code || alert.title}:${(alert.refs || []).join(',')}`;
             return (
-              <div key={`${sev}-${idx}`} className={`${meta.bg} ${meta.border} border rounded-xl p-3.5`}>
+              <div key={key} className={`${meta.bg} ${meta.border} border rounded-xl p-3.5`}>
                 <div className="flex items-start gap-3">
                   <div className={`shrink-0 p-1.5 rounded-lg ${meta.bg} border ${meta.border}`}>
                     <Icon size={13} className={meta.text} />
@@ -76,11 +84,11 @@ export default function AlertsPanel() {
 
                     {alert.refs && alert.refs.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
-                        {alert.refs.slice(0, 8).map((ref, i) => {
-                          const c = candidates.find(x => x.id === ref);
-                          const label = c ? `${c.firstName} ${c.lastName}` : ref;
+                        {[...new Set(alert.refs)].slice(0, 8).map((ref) => {
+                          // Les refs mélangent ids de candidats, de rôles et de pôles → libellés
+                          const label = refLabel(ref, { candidatesById, catalog });
                           return (
-                            <span key={i} className="text-[10px] bg-elevated border border-line rounded px-1.5 py-0.5 text-dim">
+                            <span key={ref} className="text-[10px] bg-elevated border border-line rounded px-1.5 py-0.5 text-dim">
                               {label}
                             </span>
                           );

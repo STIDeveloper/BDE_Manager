@@ -1,6 +1,6 @@
 /**
  * Tests d'intégration bout-en-bout.
- * Lance avec : node --test src/roleEngine/tests/fullstack.test.js
+ * Lance avec : node --test "src/roleEngine/tests/*.test.js"
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,17 +15,21 @@ import {
   computeHealthScore,
   groupAlerts,
   explainAssignment,
+  explainVacant,
   generateScenarioReport,
   whatIf,
   detectBlockingPairs,
   sensitivityAnalysis,
+  getCatalogRoles,
   DEFAULT_CAPACITIES,
   DEFAULT_WEIGHTS,
   DEFAULT_PENALTIES,
   DEFAULT_MIN_SCORE,
-  ROLE_CATALOG,
 } from '../index.js';
-import { buildScoreMatrix } from '../scoring.js';
+import { buildScoreMatrix, computeScore } from '../scoring.js';
+import { DEFAULT_CATALOG } from '../../core/catalog.js';
+
+const ROLES = getCatalogRoles(DEFAULT_CATALOG);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -76,10 +80,10 @@ test('[E2E-3] Dédoublonnage : aucun candidat n\'a 3 fois le même rôle', () =>
 
 test('[E2E-4] Matrice de scores : dimensions correctes', () => {
   const { candidates } = importResponses(csv);
-  const matrix = buildScoreMatrix(candidates, ROLE_CATALOG, DEFAULT_WEIGHTS, DEFAULT_PENALTIES);
+  const matrix = buildScoreMatrix(candidates, ROLES, DEFAULT_WEIGHTS, DEFAULT_PENALTIES);
   assert.equal(matrix.size, candidates.length);
   matrix.forEach(byRole => {
-    assert.equal(byRole.size, ROLE_CATALOG.length);
+    assert.equal(byRole.size, ROLES.length);
     byRole.forEach(sb => {
       assert.ok(sb.total >= 0 && sb.total <= 100);
       assert.ok(sb.raw >= 0);
@@ -122,27 +126,54 @@ test('[E2E-7] Solveur : couvre la capacité maximale', () => {
   const scenario = computeAssignments(candidates, { capacities: DEFAULT_CAPACITIES });
 
   const totalCapacity = Object.values(DEFAULT_CAPACITIES).reduce((s, n) => s + n, 0);
-  const assigned = scenario.assignments.filter(a => a.candidateId).length;
+  // Lignes réellement placées (les lignes « non placé » ont slotId = null)
+  const assigned = scenario.assignments.filter(a => a.candidateId && a.slotId).length;
+  const rowsPerCandidate = scenario.assignments.filter(a => a.candidateId).length;
+  assert.equal(rowsPerCandidate, candidates.length, 'Chaque candidat doit avoir exactement une ligne');
 
   // On ne peut pas assigner plus que le nombre de candidats
   const expectedMax = Math.min(candidates.length, totalCapacity);
   assert.ok(assigned <= expectedMax, `${assigned} > max ${expectedMax}`);
 });
 
-test('[E2E-8] Solveur : vérifier que le minimum de postes est atteint (au moins 1 par niveau clé)', () => {
+test('[E2E-8] Solveur : un poste essentiel n\'est vacant que si aucun candidat libre n\'y est éligible', () => {
   const { candidates } = importResponses(csv);
   const scenario = computeAssignments(candidates, { capacities: DEFAULT_CAPACITIES });
+  const matrix = buildScoreMatrix(candidates, ROLES, DEFAULT_WEIGHTS, DEFAULT_PENALTIES);
+  const placedIds = new Set(scenario.assignments.filter(a => a.candidateId && a.slotId).map(a => a.candidateId));
+  const unplaced = candidates.filter(c => !placedIds.has(c.id));
 
-  // Au moins Président, Trésorier, 1 Responsable Com assignés
-  const essentialRoles = ['president', 'tresorier', 'responsable_communication'];
+  const essentialRoles = ROLES.filter(r => r.essential).map(r => r.id);
+  assert.ok(essentialRoles.includes('president') && essentialRoles.includes('tresorier'));
+  let checkedVacant = 0;
   essentialRoles.forEach(roleId => {
-    const assigned = scenario.assignments.find(a => a.roleId === roleId && a.candidateId);
-    // On accepte VACANT si personne n'a le score min (mais on doit avoir au moins 1 candidat éligible)
-    const hasEligible = candidates.some(c => c.choices.includes(roleId));
-    if (hasEligible) {
-      assert.ok(assigned, `Aucun candidat assigné sur ${roleId} alors qu'il y a ${candidates.filter(c => c.choices.includes(roleId)).length} candidats`);
-    }
+    const holders = scenario.assignments.filter(a => a.roleId === roleId && a.candidateId && a.slotId);
+    const vacants = scenario.assignments.filter(a => a.roleId === roleId && a.vacant);
+    // Chaque slot du rôle est soit occupé, soit vacant (jamais les deux, jamais perdu)
+    assert.equal(holders.length + vacants.length, DEFAULT_CAPACITIES[roleId], `Slots incohérents sur ${roleId}`);
+    // Un titulaire a toujours un score ≥ seuil
+    holders.forEach(h => assert.ok(h.score.total >= DEFAULT_MIN_SCORE, `${roleId} : titulaire sous le seuil`));
+    if (vacants.length === 0) return;
+    checkedVacant++;
+    // VACANT légitime : aucun candidat NON PLACÉ n'atteint le seuil sur ce rôle
+    // (sinon le solveur gagnerait strictement à l'y placer : 100 − S ≤ 45 < 45 + 40).
+    unplaced.forEach(c => {
+      const sc = matrix.get(c.id).get(roleId).total;
+      assert.ok(sc < DEFAULT_MIN_SCORE,
+        `${roleId} vacant alors que ${c.firstName} (non placé) y obtient ${sc.toFixed(1)} ≥ ${DEFAULT_MIN_SCORE}`);
+    });
+    // Ceux qui l'ont demandé sont soit placés ailleurs, soit sous le seuil
+    candidates.filter(c => c.choices.includes(roleId)).forEach(c => {
+      const sc = matrix.get(c.id).get(roleId).total;
+      assert.ok(placedIds.has(c.id) || sc < DEFAULT_MIN_SCORE,
+        `${c.firstName} a demandé ${roleId} (score ${sc.toFixed(1)}) mais n'est placé nulle part`);
+    });
+    // Le poste vacant est expliqué
+    const ex = explainVacant(roleId, vacants[0].slotId.split('#')[1], candidates, placedIds);
+    assert.ok(ex && ex.headline.includes('VACANT'));
   });
+  // Sur les données réelles, au moins un poste essentiel est vacant (Trésorier) : l'invariant est exercé
+  if (candidates.length >= 20) assert.ok(checkedVacant > 0, 'Aucun poste essentiel vacant : invariant non exercé');
 });
 
 test('[E2E-9] Solveur : meilleur qu\'un glouton naïf', () => {
@@ -168,7 +199,7 @@ test('[E2E-9] Solveur : meilleur qu\'un glouton naïf', () => {
     if (freeSlot) {
       usedSlots.add(freeSlot);
       // Score hypothétique
-      const role = ROLE_CATALOG.find(r => r.id === roleId);
+      const role = ROLES.find(r => r.id === roleId);
       greedyScore += role ? 60 : 0;
     }
   });
@@ -231,6 +262,10 @@ test('[E2E-14] Alertes : groupement par sévérité', () => {
   assert.ok(Array.isArray(grouped.danger));
   assert.ok(Array.isArray(grouped.warning));
   assert.ok(Array.isArray(grouped.info));
+  assert.equal(grouped.danger.length + grouped.warning.length + grouped.info.length, scenario.alerts.length);
+  // Santé = 100 − (8·danger + 3·warning + 1·info), bornée à 0
+  const expected = Math.max(0, 100 - 8 * grouped.danger.length - 3 * grouped.warning.length - grouped.info.length);
+  assert.equal(computeHealthScore(scenario.alerts), expected);
 });
 
 test('[E2E-15] Alertes : détecte les contradictions internes', () => {
@@ -246,14 +281,29 @@ test('[E2E-15] Alertes : détecte les contradictions internes', () => {
 // 7. EXPLICATIONS
 // ============================================================
 
-test('[E2E-16] Explication : toutes les affectations ont un headline', () => {
+test('[E2E-16] Explication : placés → headline "→", non placés → "non assigné"', () => {
   const { candidates } = importResponses(csv);
   const scenario = computeAssignments(candidates, { capacities: DEFAULT_CAPACITIES });
-  scenario.assignments.filter(a => a.candidateId).forEach(a => {
+  const rows = scenario.assignments.filter(a => a.candidateId);
+  const placed = rows.filter(a => a.slotId);
+  const unplaced = rows.filter(a => !a.slotId);
+  assert.ok(placed.length > 0, 'Aucune affectation placée');
+  assert.equal(placed.length + unplaced.length, candidates.length);
+  placed.forEach(a => {
     const c = candidates.find(x => x.id === a.candidateId);
     const ex = explainAssignment(a, c);
     assert.ok(ex.headline.includes('→'), `Headline invalide : ${ex.headline}`);
     assert.ok(ex.summary.length > 0);
+    assert.equal(ex.criteria.length, 6);
+  });
+  unplaced.forEach(a => {
+    assert.equal(a.roleId, null);
+    assert.equal(a.score, null);
+    const c = candidates.find(x => x.id === a.candidateId);
+    const ex = explainAssignment(a, c);
+    assert.ok(ex.headline.includes('non assigné'), `Headline invalide : ${ex.headline}`);
+    assert.ok(!ex.headline.includes('→'));
+    assert.equal(ex.criteria.length, 0);
   });
 });
 
@@ -265,6 +315,13 @@ test('[E2E-17] Rapport : contient toutes les sections', () => {
   assert.ok(report.includes('Score global'));
   assert.ok(report.includes('TAILLES DES PÔLES'));
   assert.ok(report.includes('AFFECTATIONS'));
+  const placed = scenario.assignments.filter(a => a.candidateId && a.slotId).length;
+  const unplaced = scenario.assignments.filter(a => a.candidateId && !a.slotId).length;
+  assert.ok(report.includes(`AFFECTATIONS (${placed})`));
+  if (unplaced > 0) assert.ok(report.includes(`NON PLACÉS (${unplaced})`));
+  // Pôles affichés par libellé, pas par id
+  assert.ok(report.includes('Communication Interne'));
+  assert.ok(!/•\s+communication_interne\b/.test(report));
 });
 
 // ============================================================
@@ -291,13 +348,25 @@ test('[E2E-18] What-if : détecte les mouvements', () => {
 test('[E2E-19] Paires bloquantes : détecte les envies non satisfaites', () => {
   const { candidates } = importResponses(csv);
   const scenario = computeAssignments(candidates, { capacities: DEFAULT_CAPACITIES });
-  const matrix = buildScoreMatrix(candidates, ROLE_CATALOG, DEFAULT_WEIGHTS, DEFAULT_PENALTIES);
+  const matrix = buildScoreMatrix(candidates, ROLES, DEFAULT_WEIGHTS, DEFAULT_PENALTIES);
   const blockers = detectBlockingPairs({
     candidates,
     assignments: scenario.assignments,
     scoreMatrix: matrix,
   });
   assert.ok(Array.isArray(blockers));
+  blockers.forEach(bl => {
+    assert.ok(bl.gap > 10);
+    assert.notEqual(bl.currentRole, bl.preferredRole);
+  });
+});
+
+test('[E2E-19b] Sensibilité : 6 critères triés par amplitude', () => {
+  const { candidates } = importResponses(csv);
+  const role = ROLES.find(r => r.id === 'president');
+  const res = sensitivityAnalysis(candidates[0], role, DEFAULT_WEIGHTS, DEFAULT_PENALTIES, computeScore);
+  assert.equal(res.length, 6);
+  for (let i = 1; i < res.length; i++) assert.ok(res[i - 1].range >= res[i].range);
 });
 
 // ============================================================
@@ -326,7 +395,6 @@ test('[E2E-21] Cas limite : 1 seul candidat', () => {
 });
 
 test('[E2E-22] Cas limite : tous sur le même rôle', () => {
-  const roles = Array(5).fill('Président(e)').join('","');
   let csvContent = `"Horodateur","Prénom et NOM","Téléphone","Email","Formation","Alternance","Année","1er choix","2e choix","3e choix","Pourquoi","Rôle à découvrir","Apporter","Rythme","Couteau suisse"\n`;
   for (let i = 0; i < 5; i++) {
     csvContent += `"2026/09/27 6:57:16 PM UTC+3","User${i} NAME${i}","060000000${i}","user${i}@test.fr","InfoCOM","Non","BUT 1","Président(e)","","","","","","🚀 Dispo et réactif tous les jours","🔥 Carrément"\n`;

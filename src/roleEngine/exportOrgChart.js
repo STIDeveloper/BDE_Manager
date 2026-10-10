@@ -1,4 +1,5 @@
-import { ROLE_CATALOG } from './config.js';
+import { resolveCatalog } from './config.js';
+import { poleLabelIn } from '../core/catalog.js';
 
 /**
  * Exporte un SVG (chaîne) en fichier téléchargeable.
@@ -64,35 +65,55 @@ export async function downloadPng(svgEl, filename = 'organigramme.png', bgColor 
 }
 
 /**
- * Exporte les affectations en CSV.
+ * Lignes du CSV d'affectations (pur, testable sans DOM).
+ * Pôle exporté par LIBELLÉ ; candidats non placés marqués « non placé ».
+ * @param {object} [opts]  { catalog }
+ * @returns {string[][]}
  */
-export function downloadAssignmentsCsv(scenario, candidates, filename = 'affectations.csv') {
+export function buildAssignmentsRows(scenario, candidates, opts = {}) {
+  const cat = resolveCatalog(opts.catalog);
+  const roleLabel = (roleId) => (roleId ? (cat.roles?.[roleId]?.label || roleId) : '');
+  const poleLabel = (roleId) => {
+    const role = roleId ? cat.roles?.[roleId] : null;
+    return role ? poleLabelIn(cat, role.pole) : '';
+  };
+  const byId = new Map(candidates.map(c => [c.id, c]));
   const header = ['Candidat', 'Email', 'Rôle', 'Pôle', 'Score', 'Rang', 'Verrouillé'];
   const rows = [header];
 
-  scenario.assignments
-    .filter(a => a.candidateId)
-    .sort((a, b) => (b.score?.total || 0) - (a.score?.total || 0))
-    .forEach(a => {
-      const c = candidates.find(x => x.id === a.candidateId);
-      const role = ROLE_CATALOG.find(r => r.id === a.roleId);
-      const rank = a.score?.rank;
-      rows.push([
-        c ? `${c.firstName} ${c.lastName}` : '',
-        '', // email exclu par défaut (confidentialité)
-        role?.label || '',
-        role?.pole || '',
-        (a.score?.total || 0).toFixed(1),
-        rank === 1 ? '1er' : rank === 2 ? '2e' : rank === 3 ? '3e' : rank === 'discover' ? 'à découvrir' : 'renfort',
-        a.locked ? 'OUI' : '',
-      ]);
-    });
+  // Candidats placés puis non placés (slotId null)
+  const withCandidate = scenario.assignments.filter(a => a.candidateId);
+  const placed = withCandidate.filter(a => a.slotId)
+    .sort((a, b) => (b.score?.total || 0) - (a.score?.total || 0));
+  const unplaced = withCandidate.filter(a => !a.slotId);
+  [...placed, ...unplaced].forEach(a => {
+    const c = byId.get(a.candidateId);
+    const rank = a.score?.rank;
+    rows.push([
+      c ? `${c.firstName} ${c.lastName}` : '',
+      '', // email exclu par défaut (confidentialité)
+      roleLabel(a.roleId),
+      poleLabel(a.roleId),
+      a.slotId ? (a.score?.total || 0).toFixed(1) : '',
+      !a.slotId ? 'non placé'
+        : rank === 1 ? '1er' : rank === 2 ? '2e' : rank === 3 ? '3e' : rank === 'discover' ? 'à découvrir' : 'renfort',
+      a.locked ? 'OUI' : '',
+    ]);
+  });
 
   // Slots vacants
   scenario.assignments.filter(a => a.vacant).forEach(a => {
-    const role = ROLE_CATALOG.find(r => r.id === a.roleId);
-    rows.push(['— VACANT —', '', role?.label || '', role?.pole || '', '', '', '']);
+    rows.push(['— VACANT —', '', roleLabel(a.roleId), poleLabel(a.roleId), '', '', '']);
   });
+  return rows;
+}
+
+/**
+ * Exporte les affectations en CSV.
+ * @param {object} [opts]  { catalog }
+ */
+export function downloadAssignmentsCsv(scenario, candidates, filename = 'affectations.csv', opts = {}) {
+  const rows = buildAssignmentsRows(scenario, candidates, opts);
 
   const escape = (v) => {
     const s = String(v ?? '');

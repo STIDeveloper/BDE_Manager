@@ -1,18 +1,36 @@
-import React, { useState, useMemo } from 'react';
+import { Fragment, useState, useMemo } from 'react';
 import {
   Plus, Pencil, Trash2, ChevronUp, ChevronDown, Folder, FolderOpen,
   X, Tag, Layers, AlertTriangle,
 } from 'lucide-react';
 import Modal from '../Modal';
 import { useStore, FOLDER_COLORS, getFolderColor, getRootFolder, getFolderTag } from '../../store';
+import { folderDescendantIds } from '../../utils/folderTree';
+import { confirmDialog } from '../ui/confirmStore';
+import { toast } from '../ui/toastStore';
+
+// Couleur de texte Tailwind d'une couleur de dossier (FOLDER_COLORS n'a pas de clé `text`).
+const FOLDER_TEXT = {
+  red: 'text-red-500', blue: 'text-blue-500', purple: 'text-purple-500',
+  amber: 'text-amber-500', emerald: 'text-emerald-500', zinc: 'text-dim',
+};
 
 function FolderForm({ folder, folders, onSave, onCancel, parentId }) {
-  const { folderTags } = useStore();
+  const folderTags = useStore(s => s.folderTags);
   const [form, setForm] = useState(() => folder || {
     code: '', name: '', parent: parentId || null, color: 'blue', tags: [],
   });
 
   const isEditing = !!folder;
+
+  // Parents possibles : jamais le dossier lui-même ni un de ses descendants
+  // (sinon cycle dans l'arborescence — refusé aussi par le store).
+  const parentOptions = useMemo(() => {
+    if (!folder) return folders;
+    const excluded = folderDescendantIds(folder.id, folders);
+    excluded.add(folder.id);
+    return folders.filter(f => !excluded.has(f.id));
+  }, [folder, folders]);
 
   const suggestedCode = useMemo(() => {
     if (isEditing) return folder.code;
@@ -47,31 +65,29 @@ function FolderForm({ folder, folders, onSave, onCancel, parentId }) {
         <h4 className="font-bold text-ink text-sm">
           {isEditing ? 'Modifier le dossier' : 'Nouveau dossier'}
         </h4>
-        <button type="button" onClick={onCancel} className="text-dim hover:text-ink p-1">
+        <button type="button" onClick={onCancel} aria-label="Fermer le formulaire" className="text-dim hover:text-ink p-1">
           <X size={16} />
         </button>
       </div>
 
       <div className="grid grid-cols-[80px_1fr] gap-2">
         <div>
-          <label className="text-[10px] text-dim uppercase font-semibold mb-1 block">Code</label>
-          <input type="text" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })}
+          <label htmlFor="folder-code" className="text-[10px] text-dim uppercase font-semibold mb-1 block">Code</label>
+          <input id="folder-code" type="text" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })}
             placeholder={suggestedCode} className={`${inputCls} font-mono`} />
         </div>
         <div>
-          <label className="text-[10px] text-dim uppercase font-semibold mb-1 block">Nom du dossier *</label>
-          <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+          <label htmlFor="folder-name" className="text-[10px] text-dim uppercase font-semibold mb-1 block">Nom du dossier *</label>
+          <input id="folder-name" type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
             placeholder="Pôle Communication" className={inputCls} required autoFocus />
         </div>
       </div>
 
       <div>
-        <label className="text-[10px] text-dim uppercase font-semibold mb-1 block">Dossier parent</label>
-        <select value={form.parent || ''} onChange={(e) => setForm({ ...form, parent: e.target.value || null })} className={inputCls}>
+        <label htmlFor="folder-parent" className="text-[10px] text-dim uppercase font-semibold mb-1 block">Dossier parent</label>
+        <select id="folder-parent" value={form.parent || ''} onChange={(e) => setForm({ ...form, parent: e.target.value || null })} className={inputCls}>
           <option value="">— Aucun (racine) —</option>
-          {folders
-            .filter(f => f.id !== folder?.id)
-            .map(f => <option key={f.id} value={f.id}>{f.code} — {f.name}</option>)}
+          {parentOptions.map(f => <option key={f.id} value={f.id}>{f.code} — {f.name}</option>)}
         </select>
       </div>
 
@@ -83,7 +99,7 @@ function FolderForm({ folder, folders, onSave, onCancel, parentId }) {
               className={`w-8 h-8 rounded-lg transition-all flex items-center justify-center ${
                 form.color === c.id ? 'ring-2 ring-offset-2 ring-offset-base ring-ink' : ''
               }`}
-              title={c.label}>
+              title={c.label} aria-label={`Couleur ${c.label}`} aria-pressed={form.color === c.id}>
               <span className={`w-5 h-5 rounded-full ${c.dot}`} />
             </button>
           ))}
@@ -99,7 +115,7 @@ function FolderForm({ folder, folders, onSave, onCancel, parentId }) {
             const color = FOLDER_COLORS.find(c => c.id === t.color) || FOLDER_COLORS[0];
             const active = form.tags.includes(t.id);
             return (
-              <button key={t.id} type="button" onClick={() => toggleTag(t.id)}
+              <button key={t.id} type="button" onClick={() => toggleTag(t.id)} aria-pressed={active}
                 className={`text-[11px] px-2 py-1 rounded-md border transition-all ${
                   active ? color.accent : 'bg-surface border-line text-dim hover:border-dim'
                 }`}>
@@ -125,7 +141,9 @@ function FolderForm({ folder, folders, onSave, onCancel, parentId }) {
 }
 
 function FolderRow({ folder, depth, onEdit, onDelete, onMoveUp, onMoveDown, onAddChild, isEditing }) {
-  const { folders, folderTags, drivePermissions } = useStore();
+  const folders = useStore(s => s.folders);
+  const folderTags = useStore(s => s.folderTags);
+  const drivePermissions = useStore(s => s.drivePermissions);
   const root = getRootFolder(folder, folders);
   const color = getFolderColor(folder.color || root.color);
   const hasChildren = folders.some(f => f.parent === folder.id);
@@ -147,7 +165,9 @@ function FolderRow({ folder, depth, onEdit, onDelete, onMoveUp, onMoveDown, onAd
         <span className="text-dim/40 text-xs select-none" style={{ marginLeft: -14 }}>└</span>
       )}
 
-      {hasChildren ? <FolderOpen size={14} className={color.text} /> : <Folder size={14} className={color.text} />}
+      {hasChildren
+        ? <FolderOpen size={14} className={FOLDER_TEXT[color.id] || 'text-dim'} aria-hidden="true" />
+        : <Folder size={14} className={FOLDER_TEXT[color.id] || 'text-dim'} aria-hidden="true" />}
 
       <span className="text-[10px] font-mono text-dim shrink-0 w-12">{folder.code}</span>
       <span className="text-sm text-ink font-medium truncate flex-1">{folder.name}</span>
@@ -171,22 +191,30 @@ function FolderRow({ folder, depth, onEdit, onDelete, onMoveUp, onMoveDown, onAd
         </span>
       )}
 
-      <div className="flex gap-0.5 opacity-0 group-hover/row:opacity-100 transition-opacity shrink-0">
-        <button onClick={() => onMoveUp(folder.id)} title="Monter" className="p-1 text-dim hover:text-ink transition-colors"><ChevronUp size={12} /></button>
-        <button onClick={() => onMoveDown(folder.id)} title="Descendre" className="p-1 text-dim hover:text-ink transition-colors"><ChevronDown size={12} /></button>
-        <button onClick={() => onAddChild(folder.id)} title="Ajouter un sous-dossier" className="p-1 text-dim hover:text-blue-500 transition-colors"><Plus size={12} /></button>
-        <button onClick={() => onEdit(folder)} title="Modifier" className="p-1 text-dim hover:text-amber-500 transition-colors"><Pencil size={12} /></button>
-        <button onClick={() => onDelete(folder)} title="Supprimer" className="p-1 text-dim hover:text-red-500 transition-colors"><Trash2 size={12} /></button>
+      {/* Actions visibles au survol, au clavier (focus) et toujours sur écran tactile */}
+      <div className="flex gap-0.5 opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity shrink-0">
+        <button type="button" onClick={() => onMoveUp(folder.id)} title="Monter" aria-label={`Monter ${folder.name}`} className="p-1 text-dim hover:text-ink transition-colors"><ChevronUp size={12} /></button>
+        <button type="button" onClick={() => onMoveDown(folder.id)} title="Descendre" aria-label={`Descendre ${folder.name}`} className="p-1 text-dim hover:text-ink transition-colors"><ChevronDown size={12} /></button>
+        <button type="button" onClick={() => onAddChild(folder.id)} title="Ajouter un sous-dossier" aria-label={`Ajouter un sous-dossier à ${folder.name}`} className="p-1 text-dim hover:text-blue-500 transition-colors"><Plus size={12} /></button>
+        <button type="button" onClick={() => onEdit(folder)} title="Modifier" aria-label={`Modifier ${folder.name}`} className="p-1 text-dim hover:text-amber-500 transition-colors"><Pencil size={12} /></button>
+        <button type="button" onClick={() => onDelete(folder)} title="Supprimer" aria-label={`Supprimer ${folder.name}`} className="p-1 text-dim hover:text-red-500 transition-colors"><Trash2 size={12} /></button>
       </div>
     </div>
   );
 }
 
 export default function FolderManagerModal({ isOpen, onClose }) {
-  const {
-    folders, folderTags, addFolder, updateFolder, deleteFolder,
-    moveFolderUp, moveFolderDown, addFolderTag, deleteFolderTag,
-  } = useStore();
+  // Sélecteurs atomiques (Zustand v5).
+  const folders = useStore(s => s.folders);
+  const folderTags = useStore(s => s.folderTags);
+  const addFolder = useStore(s => s.addFolder);
+  const updateFolder = useStore(s => s.updateFolder);
+  const deleteFolder = useStore(s => s.deleteFolder);
+  const moveFolderUp = useStore(s => s.moveFolderUp);
+  const moveFolderDown = useStore(s => s.moveFolderDown);
+  const addFolderTag = useStore(s => s.addFolderTag);
+  const deleteFolderTag = useStore(s => s.deleteFolderTag);
+  const drivePermissions = useStore(s => s.drivePermissions);
 
   const [editingId, setEditingId] = useState(null);
   const [creatingParentId, setCreatingParentId] = useState(undefined);
@@ -209,14 +237,46 @@ export default function FolderManagerModal({ isOpen, onClose }) {
   }, [folders]);
 
   const handleSaveNew = (data) => { addFolder(data); setCreatingParentId(undefined); };
-  const handleSaveEdit = (data) => { updateFolder(editingId, data); setEditingId(null); };
+  const handleSaveEdit = (data) => {
+    // updateFolder refuse (false) un parent qui créerait un cycle.
+    if (updateFolder(editingId, data) === false) {
+      toast.error('Un dossier ne peut pas être déplacé dans lui-même ni dans un de ses sous-dossiers.', 'Déplacement impossible');
+      return;
+    }
+    setEditingId(null);
+  };
 
-  const handleDelete = (folder) => {
-    const childCount = folders.filter(f => f.parent === folder.id).length;
-    const msg = childCount > 0
-      ? `⚠️ "${folder.name}" contient ${childCount} sous-dossier(s).\n\nSupprimer ce dossier ET tous ses sous-dossiers ?\n\nToutes les permissions associées seront également perdues.`
-      : `Supprimer "${folder.name}" ?\n\nToutes les permissions associées seront perdues.`;
-    if (window.confirm(msg)) deleteFolder(folder.id);
+  const handleDelete = async (folder) => {
+    const descendants = folderDescendantIds(folder.id, folders);
+    const ids = new Set([folder.id, ...descendants]);
+    const permCount = Object.values(drivePermissions)
+      .reduce((n, perms) => n + Object.entries(perms).filter(([fid, lvl]) => ids.has(fid) && lvl !== 'none').length, 0);
+    const ok = await confirmDialog({
+      title: `Supprimer « ${folder.name} » ?`,
+      message: descendants.size > 0
+        ? `Ce dossier contient ${descendants.size} sous-dossier(s), qui seront supprimés aussi.`
+        : 'Ce dossier sera supprimé de l\'arborescence.',
+      details: [
+        `${permCount} permission(s) associée(s) seront retirées.`,
+        'Action annulable avec le bouton « Annuler » de l’en-tête.',
+      ],
+      confirmLabel: 'Supprimer',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    deleteFolder(folder.id);
+    toast.info('Dossier supprimé', folder.name);
+  };
+
+  const handleDeleteTag = async (t) => {
+    const used = folders.filter(f => (f.tags || []).includes(t.id)).length;
+    const ok = await confirmDialog({
+      title: `Supprimer le tag « ${t.label} » ?`,
+      message: used > 0 ? `Il sera retiré de ${used} dossier(s).` : 'Aucun dossier ne l\'utilise.',
+      confirmLabel: 'Supprimer',
+      tone: 'danger',
+    });
+    if (ok) deleteFolderTag(t.id);
   };
 
   const handleAddTag = () => {
@@ -252,7 +312,7 @@ export default function FolderManagerModal({ isOpen, onClose }) {
           <div className="bg-elevated/50 border border-line rounded-xl p-4 space-y-3">
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-bold text-ink flex items-center gap-2"><Tag size={14} /> Tags disponibles</h4>
-              <button onClick={() => setShowTagManager(false)} className="text-dim hover:text-ink"><X size={14} /></button>
+              <button type="button" onClick={() => setShowTagManager(false)} aria-label="Fermer la gestion des tags" className="text-dim hover:text-ink"><X size={14} /></button>
             </div>
             <div className="space-y-2">
               {folderTags.map(t => {
@@ -260,9 +320,8 @@ export default function FolderManagerModal({ isOpen, onClose }) {
                 return (
                   <div key={t.id} className="flex items-center justify-between gap-2 py-1.5 px-2 bg-surface rounded-lg border border-line">
                     <span className={`text-xs px-2 py-1 rounded border ${color.accent}`}>{t.label}</span>
-                    <button onClick={() => {
-                      if (window.confirm(`Supprimer le tag "${t.label}" ?\n\nIl sera retiré de tous les dossiers.`)) deleteFolderTag(t.id);
-                    }} className="text-dim hover:text-red-500 p-1"><Trash2 size={12} /></button>
+                    <button type="button" onClick={() => handleDeleteTag(t)} aria-label={`Supprimer le tag ${t.label}`}
+                      className="text-dim hover:text-red-500 p-1"><Trash2 size={12} /></button>
                   </div>
                 );
               })}
@@ -270,10 +329,11 @@ export default function FolderManagerModal({ isOpen, onClose }) {
             <div className="flex gap-2 pt-2 border-t border-line">
               <input type="text" value={newTagLabel} onChange={(e) => setNewTagLabel(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddTag(); } }}
-                placeholder="Nom du nouveau tag..." className={`${inputCls} flex-1`} />
+                placeholder="Nom du nouveau tag..." aria-label="Nom du nouveau tag" className={`${inputCls} flex-1`} />
               <div className="flex gap-1">
                 {FOLDER_COLORS.slice(0, 5).map(c => (
                   <button key={c.id} type="button" onClick={() => setNewTagColor(c.id)}
+                    aria-label={`Couleur ${c.label}`} aria-pressed={newTagColor === c.id}
                     className={`w-7 h-7 rounded-lg transition-all flex items-center justify-center ${
                       newTagColor === c.id ? 'ring-2 ring-offset-2 ring-offset-base ring-ink' : ''
                     }`}>
@@ -281,7 +341,7 @@ export default function FolderManagerModal({ isOpen, onClose }) {
                   </button>
                 ))}
               </div>
-              <button onClick={handleAddTag}
+              <button type="button" onClick={handleAddTag} aria-label="Ajouter le tag"
                 className="bg-blue-600 hover:bg-blue-700 text-white px-3 rounded-lg text-sm font-medium transition-colors">
                 <Plus size={14} />
               </button>
@@ -306,7 +366,7 @@ export default function FolderManagerModal({ isOpen, onClose }) {
                 const isEditingThis = editingId === folder.id;
                 const isCreatingChild = creatingParentId === folder.id;
                 return (
-                  <React.Fragment key={folder.id}>
+                  <Fragment key={folder.id}>
                     {isEditingThis ? (
                       <div className="my-2">
                         <FolderForm folder={folder} folders={folders}
@@ -328,7 +388,7 @@ export default function FolderManagerModal({ isOpen, onClose }) {
                           onSave={handleSaveNew} onCancel={() => setCreatingParentId(undefined)} />
                       </div>
                     )}
-                  </React.Fragment>
+                  </Fragment>
                 );
               })}
             </div>

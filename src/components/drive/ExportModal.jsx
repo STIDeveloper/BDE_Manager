@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import {
   Download, FileText, FileSpreadsheet, FileJson, FileType,
   Check, Info,
 } from 'lucide-react';
 import Modal from '../Modal';
 import { useStore } from '../../store';
+import { useCatalogMaps } from '../../core/useCatalog';
+import { toast } from '../ui/toastStore';
 import {
   exportMatrixCSV, exportMatrixTXT, exportMatrixPDF, exportDriveJSON,
 } from '../../utils/exporters';
@@ -17,8 +19,15 @@ const FORMATS = [
 ];
 
 export default function ExportModal({ isOpen, onClose }) {
-  const store = useStore();
-  const { members, folders, folderTags, drivePermissions, rolePresets, permissionNotes } = store;
+  // Sélecteurs atomiques (Zustand v5).
+  const members = useStore(s => s.members);
+  const folders = useStore(s => s.folders);
+  const folderTags = useStore(s => s.folderTags);
+  const drivePermissions = useStore(s => s.drivePermissions);
+  const rolePresets = useStore(s => s.rolePresets);
+  const permissionNotes = useStore(s => s.permissionNotes);
+  const catalog = useCatalogMaps();
+  const [busy, setBusy] = useState(false);
 
   const [format, setFormat] = useState('csv');
   const [scope, setScope] = useState('all');
@@ -32,16 +41,25 @@ export default function ExportModal({ isOpen, onClose }) {
 
   const targetMembers = scope === 'all' ? members : membersWithPerms;
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const payload = {
       members: targetMembers, folders, folderTags, drivePermissions,
       rolePresets, permissionNotes, includeEmptyRows, groupBy: txtGroupBy,
     };
-    if (format === 'csv') exportMatrixCSV(payload);
-    else if (format === 'txt') exportMatrixTXT(payload);
-    else if (format === 'pdf') exportMatrixPDF(payload);
-    else if (format === 'json') exportDriveJSON(payload);
-    onClose();
+    try {
+      setBusy(true);
+      if (format === 'csv') exportMatrixCSV(payload, catalog);
+      else if (format === 'txt') exportMatrixTXT(payload, catalog);
+      // PDF : jsPDF est chargé à la demande (import dynamique).
+      else if (format === 'pdf') await exportMatrixPDF(payload, catalog);
+      else if (format === 'json') exportDriveJSON(payload);
+      onClose();
+    } catch (err) {
+      console.error('Export impossible :', err);
+      toast.error('L\'export a échoué. Vérifie ta connexion (chargement du module PDF) et réessaie.', 'Export');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const colorMap = {
@@ -139,9 +157,9 @@ export default function ExportModal({ isOpen, onClose }) {
             className="flex-1 bg-elevated hover:bg-line text-ink font-medium py-2.5 rounded-lg transition-colors border border-line">
             Annuler
           </button>
-          <button onClick={handleExport}
-            className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2">
-            <Download size={14} /> Exporter
+          <button type="button" onClick={handleExport} disabled={busy} aria-busy={busy}
+            className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-bold py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2">
+            <Download size={14} aria-hidden="true" /> {busy ? 'Préparation…' : 'Exporter'}
           </button>
         </div>
       </div>

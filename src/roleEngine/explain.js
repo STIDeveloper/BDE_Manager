@@ -1,4 +1,5 @@
-import { ROLE_CATALOG } from './config.js';
+import { DEFAULT_WEIGHTS, resolveCatalog } from './config.js';
+import { isSeniorRole, poleLabelIn } from '../core/catalog.js';
 
 const RANK_LABELS = {
   1: '🥇 1er choix',
@@ -17,16 +18,27 @@ const CRITERIA_LABELS = {
   F: 'Affinité formation',
 };
 
+/**
+ * Explication lisible d'une affectation.
+ * @param {import('./types.js').Assignment} assignment
+ * @param {import('./types.js').Candidate} candidate
+ * @param {object} [opts]  { weights, stability, stabilityScore, catalog }
+ */
 export function explainAssignment(assignment, candidate, opts = {}) {
-  const role = ROLE_CATALOG.find(r => r.id === assignment.roleId);
-  if (!role) {
+  const cat = resolveCatalog(opts.catalog);
+  // Ligne « non placé » ({candidateId, slotId:null, roleId:null, score:null})
+  if (!assignment?.roleId) {
     return {
-      headline: `${candidate.firstName} — non assigné`,
+      headline: `${candidate?.firstName ?? '?'} — non assigné`,
       rankLabel: '—',
       summary: 'Aucun poste compatible trouvé avec un score suffisant.',
       criteria: [], signals: [], penalties: [], caveats: [],
     };
   }
+  // Rôle supprimé du catalogue depuis le calcul : on l'affiche quand même
+  const role = cat.roles?.[assignment.roleId]
+    || { id: assignment.roleId, label: `${assignment.roleId} (rôle supprimé)`, level: null, pole: null };
+  const senior = isSeniorRole(cat, role);
 
   const sb = assignment.score;
   const rankLabel = RANK_LABELS[sb?.rank ?? 'null'] || 'Hors choix';
@@ -37,7 +49,7 @@ export function explainAssignment(assignment, candidate, opts = {}) {
 
   const criteria = [];
   if (sb) {
-    const weights = opts.weights || { P: 0.40, D: 0.20, E: 0.15, A: 0.10, M: 0.10, F: 0.05 };
+    const weights = opts.weights || DEFAULT_WEIGHTS;
     ['P', 'D', 'E', 'A', 'M', 'F'].forEach(key => {
       const v = sb[key] ?? 0;
       criteria.push({ key, label: CRITERIA_LABELS[key], value: v, contribution: 100 * weights[key] * v });
@@ -57,10 +69,10 @@ export function explainAssignment(assignment, candidate, opts = {}) {
   if ((candidate.contradictions?.length || 0) > 0) {
     candidate.contradictions.forEach(c => caveats.push(`Contradiction : ${c}`));
   }
-  if (candidate.alternance && (role.level === 'bureau' || role.level === 'responsable')) {
+  if (candidate.alternance && senior) {
     caveats.push('Alternance + poste exigeant → prévoir un binôme.');
   }
-  if (candidate.availability <= 0.4 && (role.level === 'bureau' || role.level === 'responsable')) {
+  if (candidate.availability <= 0.4 && senior) {
     caveats.push('Disponibilité faible annoncée → surcharge probable.');
   }
 
@@ -75,9 +87,15 @@ function describeRank(rank) {
   return 'Poste non demandé, affecté en renfort.';
 }
 
-export function explainVacant(roleId, slotIndex, candidates, assignedCandidateIds = new Set()) {
-  const role = ROLE_CATALOG.find(r => r.id === roleId);
+/**
+ * Explication d'un poste resté vacant.
+ * @param {object} [opts]  { catalog }
+ */
+export function explainVacant(roleId, slotIndex, candidates, assignedCandidateIds = new Set(), opts = {}) {
+  const cat = resolveCatalog(opts.catalog);
+  const role = cat.roles?.[roleId];
   if (!role) return null;
+  const levelLabel = cat.levels?.[role.level]?.label || role.level;
 
   const unassigned = candidates.filter(c => !assignedCandidateIds.has(c.id));
   const unassignedNames = unassigned.slice(0, 5).map(c => `${c.firstName} ${c.lastName}`).join(', ');
@@ -89,7 +107,7 @@ export function explainVacant(roleId, slotIndex, candidates, assignedCandidateId
     summary: 'Aucun candidat n\'a atteint le seuil d\'éligibilité pour ce poste.',
     criteria: [], signals: [], penalties: [],
     caveats: [
-      `Poste de niveau "${role.level}" dans le pôle "${role.pole}".`,
+      `Poste de niveau "${levelLabel}" dans le pôle "${poleLabelIn(cat, role.pole)}".`,
       unassigned.length > 0
         ? `${unassigned.length} candidat${unassigned.length > 1 ? 's' : ''} non assigné${unassigned.length > 1 ? 's' : ''} : ${unassignedNames}${more}`
         : 'Tous les candidats sont assignés.',
@@ -97,36 +115,54 @@ export function explainVacant(roleId, slotIndex, candidates, assignedCandidateId
   };
 }
 
-export function generateScenarioReport(scenario, candidates) {
+/**
+ * Rapport texte d'un scénario (pôles affichés par libellé).
+ * Les candidats non placés (slotId null) sont listés à part, sans score.
+ * @param {object} [opts]  { catalog }
+ */
+export function generateScenarioReport(scenario, candidates, opts = {}) {
+  const cat = resolveCatalog(opts.catalog);
+  const byId = new Map(candidates.map(c => [c.id, c]));
+  const nameOf = (cid) => {
+    const c = byId.get(cid);
+    return c ? `${c.firstName} ${c.lastName}`.trim() : cid;
+  };
+  const fmt = (n) => (typeof n === 'number' && Number.isFinite(n) ? n.toFixed(1) : '—');
   const lines = [];
   lines.push(`📊 RAPPORT DU SCÉNARIO : ${scenario.name}`);
-  lines.push(`ℹ️  ${scenario.description}`);
+  lines.push(`ℹ️  ${scenario.description || ''}`);
   lines.push('');
   lines.push(`👥 Candidats : ${candidates.length}`);
-  lines.push(`📈 Score global : ${scenario.globalScore.toFixed(1)}`);
-  lines.push(`🎯 Satisfaction moyenne : ${scenario.avgSatisfaction.toFixed(1)}/100`);
-  lines.push(`🔻 Satisfaction minimale : ${scenario.worstSatisfaction.toFixed(1)}/100`);
+  lines.push(`📈 Score global : ${fmt(scenario.globalScore)}`);
+  lines.push(`🎯 Satisfaction moyenne : ${fmt(scenario.avgSatisfaction)}/100`);
+  lines.push(`🔻 Satisfaction minimale : ${fmt(scenario.worstSatisfaction)}/100`);
   lines.push('');
   lines.push(`📁 TAILLES DES PÔLES :`);
-  Object.entries(scenario.poleSizes).forEach(([pole, size]) => {
-    const target = scenario.poleTargets[pole] || '-';
+  Object.entries(scenario.poleSizes || {}).forEach(([pole, size]) => {
+    const target = scenario.poleTargets?.[pole] ?? '-';
     const diff = typeof target === 'number' ? size - target : 0;
     const diffStr = diff === 0 ? '✓' : diff > 0 ? `+${diff}` : `${diff}`;
-    lines.push(`  • ${pole.padEnd(28)} ${size} (cible ${target}, ${diffStr})`);
+    lines.push(`  • ${poleLabelIn(cat, pole).padEnd(28)} ${size} (cible ${target}, ${diffStr})`);
   });
   lines.push('');
-  lines.push(`🎯 AFFECTATIONS (${scenario.assignments.filter(a => a.candidateId).length}) :`);
-  scenario.assignments
-    .filter(a => a.candidateId)
-    .sort((a, b) => b.score.total - a.score.total)
+  const placed = (scenario.assignments || []).filter(a => a.candidateId && a.slotId);
+  const unplaced = (scenario.assignments || []).filter(a => a.candidateId && !a.slotId);
+  lines.push(`🎯 AFFECTATIONS (${placed.length}) :`);
+  placed
+    .sort((a, b) => (b.score?.total ?? 0) - (a.score?.total ?? 0))
     .forEach(a => {
-      const c = candidates.find(x => x.id === a.candidateId);
-      const role = ROLE_CATALOG.find(r => r.id === a.roleId);
-      const rankEmoji = a.score?.rank === 1 ? '🥇' : a.score?.rank === 2 ? '🥈' : a.score?.rank === 3 ? '🥉' : '⚠️';
-      lines.push(`  ${rankEmoji} ${c.firstName} ${c.lastName} → ${role?.label} (${a.score.total.toFixed(1)})`);
+      const roleLabel = cat.roles?.[a.roleId]?.label || a.roleId;
+      const rank = a.score?.rank;
+      const rankEmoji = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : '⚠️';
+      lines.push(`  ${rankEmoji} ${nameOf(a.candidateId)} → ${roleLabel} (${fmt(a.score?.total)})`);
     });
+  if (unplaced.length > 0) {
+    lines.push('');
+    lines.push(`🚫 NON PLACÉS (${unplaced.length}) :`);
+    unplaced.forEach(a => lines.push(`  • ${nameOf(a.candidateId)}`));
+  }
   lines.push('');
-  if (scenario.alerts.length > 0) {
+  if ((scenario.alerts || []).length > 0) {
     lines.push(`⚠️  ALERTES (${scenario.alerts.length}) :`);
     scenario.alerts.forEach(alert => {
       const prefix = alert.severity === 'danger' ? '🔴' : alert.severity === 'warning' ? '🟡' : '🔵';

@@ -1,4 +1,6 @@
 import { normalizeKey } from './normalizer.js';
+import { resolveCatalog } from './config.js';
+import { isSeniorRole } from '../core/catalog.js';
 
 // ============================================================
 // Règles lexicales (FR) — documentées
@@ -102,8 +104,13 @@ export function signalStrength(signals, type) {
   return filtered.length === 0 ? 0 : Math.max(...filtered.map(s => s.strength));
 }
 
-/** Détecte les contradictions internes d'un candidat */
-export function detectContradictions(candidate) {
+/**
+ * Détecte les contradictions internes d'un candidat.
+ * @param {import('./types.js').Candidate} candidate
+ * @param {object} [catalog]  défaut : catalogue actif
+ */
+export function detectContradictions(candidate, catalog) {
+  const cat = resolveCatalog(catalog);
   const contradictions = [];
   const amb = signalStrength(candidate.signals, 'ambition');
   const ret = signalStrength(candidate.signals, 'retrait');
@@ -113,8 +120,12 @@ export function detectContradictions(candidate) {
   if (amb >= 0.6 && ret >= 0.6) {
     contradictions.push('Ambition et retrait volontaire détectés simultanément');
   }
-  // Rôle bureau/responsable + dispo faible
-  const hasLeadershipRole = candidate.choices.some(c => {
+  // Rôle bureau/responsable + dispo faible.
+  // Un choix est « à responsabilité » si son niveau est de type bureau /
+  // responsable dans le catalogue, ou (compatibilité historique) si son id
+  // évoque un poste du bureau (ex. secretaire_adjoint).
+  const hasLeadershipRole = (candidate.choices || []).some(c => {
+    if (isSeniorRole(cat, cat.roles?.[c])) return true;
     const k = normalizeKey(c);
     return /\b(president|vice|responsable|tresorier|secretaire)\b/.test(k);
   });

@@ -1,4 +1,3 @@
-import { ROLE_CATALOG } from './config.js';
 import { buildSlots } from './roles.js';
 
 export function hungarian(cost) {
@@ -56,9 +55,44 @@ const VACANT_SLOT_COST    = 40;
 const NOT_ASSIGNED_COST   = 45;
 const INELIGIBLE_COST     = 1000;
 
+/**
+ * Ne conserve que les verrous « candidatId:slotId » exploitables :
+ * candidat présent, slot existant (rôle encore au catalogue, capacité
+ * suffisante) et ni le candidat ni le slot déjà verrouillés ailleurs.
+ * Un verrou pendant est ignoré au lieu de rendre le candidat inplaçable.
+ * @returns {Set<string>}
+ */
+export function sanitizeLockedPairs(lockedPairs, candidates, slots) {
+  const valid = new Set();
+  if (!lockedPairs) return valid;
+  const candidateIds = new Set(candidates.map(c => c.id));
+  const slotIds = new Set(slots.map(s => s.id));
+  const usedC = new Set();
+  const usedS = new Set();
+  for (const lp of lockedPairs) {
+    if (typeof lp !== 'string') continue;
+    const sep = lp.indexOf(':');
+    if (sep <= 0) continue;
+    const cid = lp.slice(0, sep);
+    const sid = lp.slice(sep + 1);
+    if (!candidateIds.has(cid) || !slotIds.has(sid) || usedC.has(cid) || usedS.has(sid)) continue;
+    usedC.add(cid); usedS.add(sid);
+    valid.add(lp);
+  }
+  return valid;
+}
+
 export function solveAssignment(candidates, slots, scoreMatrix, opts = {}) {
   const minScore = opts.minScore ?? 55;
-  const lockedPairs = opts.lockedPairs ?? new Set();
+  const lockedPairs = sanitizeLockedPairs(opts.lockedPairs, candidates, slots);
+  // Index des verrous (évite de reparcourir l'ensemble pour chaque cellule)
+  const lockedCandidates = new Set();
+  const lockedSlots = new Set();
+  lockedPairs.forEach(lp => {
+    const sep = lp.indexOf(':');
+    lockedCandidates.add(lp.slice(0, sep));
+    lockedSlots.add(lp.slice(sep + 1));
+  });
 
   const N = candidates.length;
   const M = slots.length;
@@ -68,52 +102,32 @@ export function solveAssignment(candidates, slots, scoreMatrix, opts = {}) {
   for (let i = 0; i < N; i++) {
     const c = candidates[i];
     const byRole = scoreMatrix.get(c.id);
+    const candidateLocked = lockedCandidates.has(c.id);
     for (let j = 0; j < M; j++) {
       const slot = slots[j];
-      const roleId = slot.roleId;
-      const sb = byRole.get(roleId);
+      const sb = byRole?.get(slot.roleId);
       const score = sb ? sb.total : 0;
 
-      const key = `${c.id}:${slot.id}`;
-      if (lockedPairs.has(key)) { cost[i][j] = -1; continue; }
-
-      let blockedByLock = false;
-      for (const lp of lockedPairs) {
-        const [lockedCid, lockedSid] = lp.split(':');
-        if (lockedSid === slot.id && lockedCid !== c.id) { blockedByLock = true; break; }
-      }
-      if (blockedByLock) { cost[i][j] = INELIGIBLE_COST; continue; }
-
-      let candidateLocked = false;
-      for (const lp of lockedPairs) {
-        const [lockedCid] = lp.split(':');
-        if (lockedCid === c.id) { candidateLocked = true; break; }
-      }
-      if (candidateLocked) { cost[i][j] = INELIGIBLE_COST; continue; }
+      if (lockedPairs.has(`${c.id}:${slot.id}`)) { cost[i][j] = -1; continue; }
+      // Slot verrouillé pour un autre candidat, ou candidat verrouillé ailleurs
+      if (lockedSlots.has(slot.id) || candidateLocked) { cost[i][j] = INELIGIBLE_COST; continue; }
 
       cost[i][j] = score >= minScore ? (100 - score) : INELIGIBLE_COST;
     }
   }
 
+  // Colonnes fictives « non assigné »
   for (let i = 0; i < N; i++) {
+    const candidateLocked = lockedCandidates.has(candidates[i].id);
     for (let j = M; j < size; j++) {
-      let candidateLocked = false;
-      for (const lp of lockedPairs) {
-        const [lockedCid] = lp.split(':');
-        if (lockedCid === candidates[i].id) { candidateLocked = true; break; }
-      }
       cost[i][j] = candidateLocked ? INELIGIBLE_COST : NOT_ASSIGNED_COST;
     }
   }
 
+  // Lignes fictives « slot vacant »
   for (let i = N; i < size; i++) {
     for (let j = 0; j < M; j++) {
-      let blockedByLock = false;
-      for (const lp of lockedPairs) {
-        const [, lockedSid] = lp.split(':');
-        if (lockedSid === slots[j].id) { blockedByLock = true; break; }
-      }
-      cost[i][j] = blockedByLock ? INELIGIBLE_COST : VACANT_SLOT_COST;
+      cost[i][j] = lockedSlots.has(slots[j].id) ? INELIGIBLE_COST : VACANT_SLOT_COST;
     }
   }
 
@@ -133,8 +147,7 @@ export function solveAssignment(candidates, slots, scoreMatrix, opts = {}) {
     const j = assignment[i];
     if (j < M) {
       const slot = slots[j];
-      const byRole = scoreMatrix.get(c.id);
-      const score = byRole.get(slot.roleId) || null;
+      const score = scoreMatrix.get(c.id)?.get(slot.roleId) || null;
       if (score && score.total >= minScore) {
         usedSlots.add(slot.id);
         globalScore += score.total;
@@ -163,7 +176,6 @@ function isSwappable(a) {
 
 export function localSearch(assignments, scoreMatrix, opts = {}) {
   const minScore = opts.minScore ?? 55;
-  const lockedPairs = opts.lockedPairs ?? new Set();
   const maxIter = opts.maxIterations ?? 100;
 
   let current = assignments.map(a => ({ ...a }));
@@ -250,10 +262,12 @@ export function localSearch(assignments, scoreMatrix, opts = {}) {
   return { assignments: current, globalScore: best };
 }
 
+/**
+ * Hongrois + recherche locale.
+ * @param {object} [opts]  { minScore, lockedPairs, catalog }
+ */
 export function runSolver(candidates, capacities, scoreMatrix, opts = {}) {
-  const slots = buildSlots(capacities);
-  const { assignments, globalScore } = solveAssignment(candidates, slots, scoreMatrix, opts);
+  const slots = buildSlots(capacities, opts.catalog);
+  const { assignments } = solveAssignment(candidates, slots, scoreMatrix, opts);
   return localSearch(assignments, scoreMatrix, opts);
 }
-
-export { ROLE_CATALOG };

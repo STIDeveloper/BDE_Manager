@@ -1,10 +1,11 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import {
   LayoutDashboard, Users, Target, TrendingUp, Award, AlertTriangle,
   GraduationCap, Briefcase,
 } from 'lucide-react';
 import { useRolesStore } from '../../roleEngine/store.js';
-import { ROLE_CATALOG } from '../../roleEngine/config.js';
+import { useCatalog } from '../../core/useCatalog.js';
+import { countAssignments, isPlaced } from './scenarioStats.js';
 
 function StatCard({ icon: Icon, label, value, sub, tone = 'blue' }) {
   const toneCls = {
@@ -48,16 +49,26 @@ function Bar({ label, value, total, tone = 'blue' }) {
 }
 
 export default function DashboardPanel() {
-  const { candidates, getSelectedScenario } = useRolesStore();
-  const scenario = getSelectedScenario();
+  const candidates = useRolesStore(s => s.candidates);
+  const scenario = useRolesStore(s => s.scenarios[s.selectedScenarioIndex] || null);
+  const { roles, poleList } = useCatalog();
 
   const stats = useMemo(() => {
     if (!scenario) return null;
-    const assigned = scenario.assignments.filter(a => a.candidateId);
-    const rank1 = assigned.filter(a => a.score?.rank === 1).length;
-    const rank2 = assigned.filter(a => a.score?.rank === 2).length;
-    const rank3 = assigned.filter(a => a.score?.rank === 3).length;
-    const out = assigned.length - rank1 - rank2 - rank3;
+    // Placés = candidat ET place (les non placés ont slotId null)
+    const { placed, unplaced, vacant, rank1, rank2, rank3, discover, out } = countAssignments(scenario);
+
+    // Effectif par pôle (ordre et libellés du catalogue, pôles personnalisés inclus)
+    const perPole = new Map(poleList.map(p => [p.id, { id: p.id, label: `${p.emoji ? p.emoji + ' ' : ''}${p.label}`, placed: 0, capacity: 0 }]));
+    Object.values(roles).forEach(r => {
+      const e = perPole.get(r.pole);
+      if (e) e.capacity += r.capacity ?? 0;
+    });
+    scenario.assignments.filter(isPlaced).forEach(a => {
+      const e = perPole.get(roles[a.roleId]?.pole);
+      if (e) e.placed++;
+    });
+    const byPole = [...perPole.values()].filter(e => e.capacity > 0 || e.placed > 0);
 
     // Stats par formation
     const byFormation = {};
@@ -87,14 +98,16 @@ export default function DashboardPanel() {
 
     return {
       total: candidates.length,
-      assigned: assigned.length,
-      vacant: scenario.assignments.filter(a => a.vacant).length,
-      rank1, rank2, rank3, out,
+      assigned: placed,
+      unplaced,
+      vacant,
+      rank1, rank2, rank3, discover, out,
+      byPole,
       byFormation, byYear, alternance, byAvailability, swissKnife,
       avgScore: scenario.avgSatisfaction,
       worstScore: scenario.worstSatisfaction,
     };
-  }, [scenario, candidates]);
+  }, [scenario, candidates, roles, poleList]);
 
   if (!stats) {
     return <div className="text-center py-16 text-dim text-sm">Aucune donnée disponible.</div>;
@@ -109,7 +122,7 @@ export default function DashboardPanel() {
 
       {/* Stats principales */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard icon={Users} label="Candidats" value={stats.total} sub={`${stats.assigned} placés`} tone="blue" />
+        <StatCard icon={Users} label="Candidats" value={stats.total} sub={`${stats.assigned} placés${stats.unplaced ? ` · ${stats.unplaced} non placés` : ''}`} tone={stats.unplaced ? 'amber' : 'blue'} />
         <StatCard icon={Target} label="Score moyen" value={stats.avgScore.toFixed(0)} sub="/ 100" tone="emerald" />
         <StatCard icon={TrendingUp} label="Pire cas" value={stats.worstScore.toFixed(0)} sub="équité" tone={stats.worstScore < 40 ? 'amber' : 'emerald'} />
         <StatCard icon={AlertTriangle} label="Postes vacants" value={stats.vacant} sub="à pourvoir" tone={stats.vacant > 0 ? 'amber' : 'emerald'} />
@@ -122,7 +135,23 @@ export default function DashboardPanel() {
           <Bar label="🥇 1er choix" value={stats.rank1} total={stats.assigned} tone="emerald" />
           <Bar label="🥈 2e choix" value={stats.rank2} total={stats.assigned} tone="blue" />
           <Bar label="🥉 3e choix" value={stats.rank3} total={stats.assigned} tone="amber" />
+          {stats.discover > 0 && <Bar label="✨ Rôle à découvrir" value={stats.discover} total={stats.assigned} tone="blue" />}
           <Bar label="⚠️ Hors choix (renfort)" value={stats.out} total={stats.assigned} tone="purple" />
+        </div>
+        {stats.unplaced > 0 && (
+          <p className="text-[11px] text-amber-500 mt-3">
+            {stats.unplaced} candidat{stats.unplaced > 1 ? 's' : ''} non placé{stats.unplaced > 1 ? 's' : ''} (aucun poste au-dessus du seuil d'éligibilité) — visibles dans la colonne « Non placés » de l'organigramme.
+          </p>
+        )}
+      </div>
+
+      {/* Effectifs par pôle */}
+      <div className="bg-surface border border-line rounded-xl p-4">
+        <h4 className="text-xs font-semibold text-ink mb-3">Postes pourvus par pôle</h4>
+        <div className="space-y-2">
+          {stats.byPole.map(p => (
+            <Bar key={p.id} label={`${p.label} (${p.placed}/${p.capacity})`} value={p.placed} total={p.capacity} tone={p.placed < p.capacity ? 'amber' : 'emerald'} />
+          ))}
         </div>
       </div>
 

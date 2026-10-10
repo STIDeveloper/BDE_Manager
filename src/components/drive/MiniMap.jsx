@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Map, X } from 'lucide-react';
-import { PERMISSION_LEVELS, FOLDER_COLORS, getRootFolder } from '../../store';
+import { PERMISSION_LEVELS } from '../../store';
 
 export default function MiniMap({ members, folders, drivePermissions, scrollContainerRef }) {
   const [visible, setVisible] = useState(false);

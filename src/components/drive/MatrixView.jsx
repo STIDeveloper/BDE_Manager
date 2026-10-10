@@ -1,13 +1,16 @@
-import React, { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import {
   User, Search, X, CheckCircle2, AlertCircle, AlertTriangle, Circle,
-  StickyNote, ZoomIn, ZoomOut, Layers,
+  StickyNote, ZoomIn, ZoomOut, Layers, Eraser, Users,
 } from 'lucide-react';
 import {
   useStore, PERMISSION_LEVELS, FOLDER_COLORS,
   getRootFolder, getFolderColor, getFolderTag, getMemberConfigStatus, CONFIG_STATUS_META,
 } from '../../store';
 import { toast } from '../ui/toastStore';
+import { confirmDialog } from '../ui/confirmStore';
+import { useCatalog, memberRoleLabel } from '../../core/useCatalog';
+import { resolveMemberRole } from '../../utils/memberRoles';
 import PermissionNotePopover from './PermissionNotePopover';
 import MiniMap from './MiniMap';
 
@@ -20,12 +23,25 @@ const getLevel = (id) =>
 const dotClass = (colorId) =>
   (FOLDER_COLORS.find(c => c.id === colorId) || FOLDER_COLORS[FOLDER_COLORS.length - 1]).dot;
 
+// Couleur de texte Tailwind d'une couleur de dossier (FOLDER_COLORS n'a pas de clé `text`).
+const FOLDER_TEXT = {
+  red: 'text-red-500', blue: 'text-blue-500', purple: 'text-purple-500',
+  amber: 'text-amber-500', emerald: 'text-emerald-500', zinc: 'text-dim',
+};
+
+// Actions secondaires masquées au survol sur desktop, mais toujours visibles
+// au clavier (focus) et sur écrans tactiles (pas de survol possible).
+const REVEAL_ROW = 'opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100';
+const REVEAL_CELL = 'opacity-0 group-hover/cell:opacity-100 group-focus-within/cell:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100';
+const REVEAL_HEADER = 'opacity-0 group-hover/header:opacity-100 group-focus-within/header:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100';
+
 const StatusIcon = ({ status }) => {
-  const meta = CONFIG_STATUS_META[status];
-  if (status === 'complete') return <CheckCircle2 size={12} className="text-emerald-500" title={meta.label} />;
-  if (status === 'partial') return <AlertCircle size={12} className="text-amber-500" title={meta.label} />;
-  if (status === 'mismatch') return <AlertTriangle size={12} className="text-red-500" title={meta.label} />;
-  return <Circle size={12} className="text-dim/40" title={meta.label} />;
+  const meta = CONFIG_STATUS_META[status] || CONFIG_STATUS_META.empty;
+  const common = { size: 12, role: 'img', 'aria-label': `Statut : ${meta.label}` };
+  if (status === 'complete') return <CheckCircle2 {...common} className="text-emerald-500 shrink-0" />;
+  if (status === 'partial') return <AlertCircle {...common} className="text-amber-500 shrink-0" />;
+  if (status === 'mismatch') return <AlertTriangle {...common} className="text-red-500 shrink-0" />;
+  return <Circle {...common} className="text-dim/40 shrink-0" />;
 };
 
 function Legend() {
@@ -43,20 +59,29 @@ function Legend() {
       <span className="ml-2 flex items-center gap-1 text-dim">
         <span className="w-2 h-2 rounded-full bg-amber-500" /> = note
       </span>
-      <span className="text-dim ml-auto italic">Clic : cycle • Clic droit : reculer</span>
+      <span className="text-dim ml-auto italic">Clic : avancer • Clic droit : reculer</span>
     </div>
   );
 }
 
 export default function MatrixView({ highlightMemberId, highlightFolderId }) {
-  const {
-    members, folders, folderTags, drivePermissions, permissionNotes, rolePresets,
-    setPermission, clearMemberPermissions, clearFolderPermissions,
-  } = useStore();
+  // Sélecteurs atomiques (Zustand v5) : pas de re-rendu sur les autres clés.
+  const members = useStore(s => s.members);
+  const folders = useStore(s => s.folders);
+  const folderTags = useStore(s => s.folderTags);
+  const drivePermissions = useStore(s => s.drivePermissions);
+  const permissionNotes = useStore(s => s.permissionNotes);
+  const rolePresets = useStore(s => s.rolePresets);
+  const setPermission = useStore(s => s.setPermission);
+  const clearMemberPermissions = useStore(s => s.clearMemberPermissions);
+  const clearFolderPermissions = useStore(s => s.clearFolderPermissions);
+  const catalog = useCatalog();
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [rootFilter, setRootFilter] = useState('all');
+  // Filtre membres par rôle / pôle du catalogue : '' | 'pole:<id>' | 'role:<id>' | 'none'
+  const [roleFilter, setRoleFilter] = useState('');
   const [showNotes, setShowNotes] = useState(true);
   const [focusFolderId, setFocusFolderId] = useState(null);
   const [notePopover, setNotePopover] = useState(null);
@@ -98,14 +123,55 @@ export default function MatrixView({ highlightMemberId, highlightFolderId }) {
     return counts;
   }, [memberStatuses]);
 
-  const filteredMembers = useMemo(() =>
-    members.filter(m => {
-      const matchSearch = !search ||
-        m.firstName.toLowerCase().includes(search.toLowerCase()) ||
-        (m.lastName || '').toLowerCase().includes(search.toLowerCase());
+  // Rôle du catalogue de chaque membre (id, ou ancien libellé résolu).
+  const memberRoles = useMemo(() => {
+    const map = {};
+    members.forEach(m => { map[m.id] = resolveMemberRole(m, catalog); });
+    return map;
+  }, [members, catalog]);
+
+  const filteredMembers = useMemo(() => {
+    const q = search.toLowerCase();
+    return members.filter(m => {
+      const matchSearch = !q ||
+        (m.firstName || '').toLowerCase().includes(q) ||
+        (m.lastName || '').toLowerCase().includes(q);
       const matchStatus = statusFilter === 'all' || memberStatuses[m.id] === statusFilter;
-      return matchSearch && matchStatus;
-    }), [members, search, statusFilter, memberStatuses]);
+      const role = memberRoles[m.id];
+      const matchRole = !roleFilter
+        || (roleFilter === 'none' && !role)
+        || (roleFilter.startsWith('pole:') && role?.pole === roleFilter.slice(5))
+        || (roleFilter.startsWith('role:') && role?.id === roleFilter.slice(5));
+      return matchSearch && matchStatus && matchRole;
+    });
+  }, [members, search, statusFilter, memberStatuses, memberRoles, roleFilter]);
+
+  const handleClearFolder = async (f) => {
+    const total = Object.values(drivePermissions).filter(p => p[f.id] && p[f.id] !== 'none').length;
+    const ok = await confirmDialog({
+      title: `Vider le dossier « ${f.code} ${f.name} » ?`,
+      message: total > 0
+        ? `${total} accès seront retirés pour tous les membres (annulable).`
+        : 'Aucun membre n\'a d\'accès sur ce dossier.',
+      confirmLabel: 'Vider le dossier',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    clearFolderPermissions(f.id);
+    toast.info('Permissions effacées', f.name);
+  };
+
+  const handleClearMember = async (m) => {
+    const ok = await confirmDialog({
+      title: `Effacer toutes les permissions de ${m.firstName} ?`,
+      message: 'Tous ses accès Drive seront retirés (annulable).',
+      confirmLabel: 'Tout effacer',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    clearMemberPermissions(m.id);
+    toast.info('Permissions effacées', m.firstName);
+  };
 
   const folderStats = useMemo(() => {
     const stats = {};
@@ -152,11 +218,11 @@ export default function MatrixView({ highlightMemberId, highlightFolderId }) {
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex-1 min-w-[200px] relative">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dim" />
-          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
-            placeholder="Filtrer les membres..."
+          <input type="search" value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Filtrer les membres..." aria-label="Filtrer les membres par nom"
             className="w-full bg-surface border border-line rounded-xl pl-9 pr-3 py-2 text-ink placeholder-dim focus:outline-none focus:border-blue-500 text-sm" />
         </div>
-        <button onClick={() => setShowNotes(!showNotes)}
+        <button type="button" onClick={() => setShowNotes(!showNotes)} aria-pressed={showNotes}
           title={showNotes ? 'Masquer les notes' : 'Afficher les notes'}
           className={`flex items-center gap-1.5 text-xs px-2.5 py-2 rounded-xl border transition-colors ${
             showNotes ? 'bg-amber-500/10 border-amber-500/40 text-amber-500' : 'bg-elevated border-line text-dim hover:text-ink'
@@ -170,7 +236,7 @@ export default function MatrixView({ highlightMemberId, highlightFolderId }) {
         <span className="text-xs text-dim font-medium mr-1 flex items-center gap-1">
           <Layers size={12} /> Pôle :
         </span>
-        <button onClick={() => setRootFilter('all')}
+        <button type="button" onClick={() => setRootFilter('all')} aria-pressed={rootFilter === 'all'}
           className={`text-xs px-2.5 py-1 rounded-lg transition-all border ${
             rootFilter === 'all' ? 'bg-surface border-line text-ink shadow-sm' : 'bg-elevated border-transparent text-dim hover:text-ink'
           }`}>
@@ -181,7 +247,8 @@ export default function MatrixView({ highlightMemberId, highlightFolderId }) {
           const color = getFolderColor(rf.color);
           const count = folders.filter(f => f.id === rf.id || getRootFolder(f, folders).id === rf.id).length;
           return (
-            <button key={rf.id} onClick={() => setRootFilter(rf.id)}
+            <button key={rf.id} type="button" onClick={() => setRootFilter(rf.id)} aria-pressed={rootFilter === rf.id}
+              title={rf.name}
               className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg transition-all border ${
                 rootFilter === rf.id
                   ? `${color.accent} border-current shadow-sm`
@@ -194,7 +261,7 @@ export default function MatrixView({ highlightMemberId, highlightFolderId }) {
           );
         })}
         {focusFolderId && (
-          <button onClick={() => setFocusFolderId(null)}
+          <button type="button" onClick={() => setFocusFolderId(null)}
             className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-blue-500/10 border border-blue-500/40 text-blue-500 font-medium transition-colors">
             <ZoomOut size={11} /> Quitter le focus
           </button>
@@ -202,9 +269,28 @@ export default function MatrixView({ highlightMemberId, highlightFolderId }) {
       </div>
 
       <div className="flex items-center gap-1.5 flex-wrap">
+        <label className="text-xs text-dim font-medium mr-1 flex items-center gap-1" htmlFor="matrix-role-filter">
+          <Users size={12} aria-hidden="true" /> Rôle :
+        </label>
+        <select id="matrix-role-filter" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}
+          className="text-xs bg-elevated border border-line rounded-lg px-2 py-1 text-ink focus:outline-none focus:border-blue-500 max-w-full">
+          <option value="">Tous les rôles</option>
+          {catalog.poleList.map(p => (
+            <optgroup key={p.id} label={`${p.emoji} ${p.label}`}>
+              <option value={`pole:${p.id}`}>Tout le pôle {p.label}</option>
+              {(catalog.rolesByPole[p.id] || []).map(r => (
+                <option key={r.id} value={`role:${r.id}`}>{r.label}</option>
+              ))}
+            </optgroup>
+          ))}
+          <option value="none">Sans rôle du catalogue</option>
+        </select>
+      </div>
+
+      <div className="flex items-center gap-1.5 flex-wrap">
         <span className="text-xs text-dim font-medium mr-1">Statut :</span>
         {statusFilterButtons.map(s => (
-          <button key={s.id} onClick={() => setStatusFilter(s.id)}
+          <button key={s.id} type="button" onClick={() => setStatusFilter(s.id)} aria-pressed={statusFilter === s.id}
             className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg transition-all border ${
               statusFilter === s.id ? 'bg-surface border-line text-ink shadow-sm' : 'bg-elevated border-transparent text-dim hover:text-ink'
             }`}>
@@ -255,17 +341,13 @@ export default function MatrixView({ highlightMemberId, highlightFolderId }) {
                       className={`group/header border-b border-r border-line p-1 align-bottom transition-all relative ${isHighlighted ? 'bg-blue-500/20' : ''} ${isFocused ? 'bg-blue-500/10' : ''}`}
                       style={{ minWidth: isFocused ? 200 : 60 }}>
                       <button
+                        type="button"
                         onClick={(e) => { e.stopPropagation(); setFocusFolderId(focusFolderId === f.id ? null : f.id); }}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          if (window.confirm(`Effacer TOUTES les permissions du dossier "${f.name}" ?`)) {
-                            clearFolderPermissions(f.id);
-                            toast.info('Permissions effacées', f.name);
-                          }
-                        }}
+                        aria-pressed={isFocused}
+                        aria-label={`${isFocused ? 'Quitter le focus sur' : 'Focus sur'} ${f.code} ${f.name}`}
                         className="w-full flex flex-col items-center gap-0.5 rounded-md p-1 hover:bg-blue-500/10 transition-colors"
-                        title={`${f.code} - ${f.name}\n${folderTagList.map(t => t.label).join(' • ') || 'Sans tag'}\n\nClic : focus  •  Clic droit : effacer\n${total} membre(s) concerné(s)`}>
-                        <span className={`text-[10px] font-mono font-bold ${color.text}`}>{f.code}</span>
+                        title={`${f.code} - ${f.name}\n${folderTagList.map(t => t.label).join(' • ') || 'Sans tag'}\n\nClic : focus\n${total} membre(s) concerné(s)`}>
+                        <span className={`text-[10px] font-mono font-bold ${FOLDER_TEXT[color.id] || 'text-dim'}`}>{f.code}</span>
                         <span className={`text-[8px] text-dim truncate leading-tight ${isFocused ? 'max-w-none' : 'max-w-[54px]'}`}>
                           {isFocused ? f.name : f.name.split(' ').slice(0, 2).join(' ')}
                         </span>
@@ -279,7 +361,15 @@ export default function MatrixView({ highlightMemberId, highlightFolderId }) {
                         {total > 0 && <span className="text-[8px] text-dim font-mono">{total}</span>}
                       </button>
                       {isFocused && (
-                        <div className="absolute top-1 right-1 text-blue-500"><ZoomIn size={10} /></div>
+                        <div className="absolute top-1 right-1 text-blue-500" aria-hidden="true"><ZoomIn size={10} /></div>
+                      )}
+                      {total > 0 && (
+                        <button type="button" onClick={() => handleClearFolder(f)}
+                          title={`Vider les permissions de ${f.code}`}
+                          aria-label={`Vider toutes les permissions du dossier ${f.code} ${f.name}`}
+                          className={`absolute top-0.5 left-0.5 p-0.5 rounded bg-surface/80 text-dim hover:text-red-500 transition-opacity ${isFocused ? 'opacity-100' : REVEAL_HEADER}`}>
+                          <Eraser size={10} />
+                        </button>
                       )}
                     </th>
                   );
@@ -303,7 +393,7 @@ export default function MatrixView({ highlightMemberId, highlightFolderId }) {
                             <div className="font-semibold text-ink truncate text-[12px]">
                               {m.firstName} {m.lastName && <span className="text-dim font-normal">{m.lastName}</span>}
                             </div>
-                            <div className="text-[10px] text-dim truncate">{m.mainRole || 'Sans rôle'}</div>
+                            <div className="text-[10px] text-dim truncate">{memberRoleLabel(m, catalog.roles) || 'Sans rôle'}</div>
                           </div>
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
@@ -311,14 +401,11 @@ export default function MatrixView({ highlightMemberId, highlightFolderId }) {
                             <span className="text-[9px] bg-elevated text-dim rounded px-1.5 py-0.5 font-mono">{totalPerms}</span>
                           )}
                           <button
-                            onClick={() => {
-                              if (window.confirm(`Effacer toutes les permissions de ${m.firstName} ?`)) {
-                                clearMemberPermissions(m.id);
-                                toast.info('Permissions effacées', m.firstName);
-                              }
-                            }}
-                            className="opacity-0 group-hover/row:opacity-100 text-dim hover:text-red-500 text-xs transition-opacity"
-                            title="Effacer ses permissions">
+                            type="button"
+                            onClick={() => handleClearMember(m)}
+                            className={`${REVEAL_ROW} text-dim hover:text-red-500 text-xs transition-opacity`}
+                            title="Effacer ses permissions"
+                            aria-label={`Effacer toutes les permissions de ${m.firstName}`}>
                             <X size={12} />
                           </button>
                         </div>
@@ -336,6 +423,8 @@ export default function MatrixView({ highlightMemberId, highlightFolderId }) {
                           style={{ minWidth: isFocused ? 200 : 60 }}>
                           <div className="relative">
                             <button
+                              type="button"
+                              aria-label={`${m.firstName} → ${f.code} ${f.name} : ${level.label}${hasNote ? ' (note)' : ''}. Activer pour passer au niveau suivant.`}
                               onClick={() => cycle(m.id, f.id, perm, false)}
                               onContextMenu={(e) => { e.preventDefault(); cycle(m.id, f.id, perm, true); }}
                               className={`w-full h-7 rounded transition-all flex items-center justify-center text-[10px] font-bold ${level.bg} ${level.text} ${level.hover} ${isFocused ? 'text-xs' : ''}`}
@@ -348,8 +437,10 @@ export default function MatrixView({ highlightMemberId, highlightFolderId }) {
                             )}
 
                             <button
+                              type="button"
                               onClick={(e) => openNotePopover(e, m, f)}
-                              className={`absolute -top-0.5 left-0.5 p-0.5 rounded opacity-0 group-hover/cell:opacity-100 transition-opacity ${
+                              aria-label={`${hasNote ? 'Modifier la note' : 'Ajouter une note'} : ${m.firstName} → ${f.code}`}
+                              className={`absolute -top-0.5 left-0.5 p-0.5 rounded ${REVEAL_CELL} transition-opacity ${
                                 hasNote ? 'text-amber-500 bg-amber-500/10' : 'text-dim bg-elevated'
                               }`}
                               title={hasNote ? 'Modifier la note' : 'Ajouter une note'}>
@@ -381,13 +472,16 @@ export default function MatrixView({ highlightMemberId, highlightFolderId }) {
         />
       </div>
 
-      <PermissionNotePopover
-        isOpen={!!notePopover}
-        onClose={() => setNotePopover(null)}
-        member={notePopover?.member}
-        folder={notePopover?.folder}
-        anchorRect={notePopover?.anchorRect}
-      />
+      {notePopover && (
+        <PermissionNotePopover
+          key={`${notePopover.member.id}:${notePopover.folder.id}`}
+          isOpen
+          onClose={() => setNotePopover(null)}
+          member={notePopover.member}
+          folder={notePopover.folder}
+          anchorRect={notePopover.anchorRect}
+        />
+      )}
     </div>
   );
 }

@@ -1,6 +1,9 @@
 // ============================================================
 // Configuration officielle du BDE IUT Montreuil
 // ============================================================
+// ⚠️ Les rôles (`mainRole`) et les clés de presets sont les LIBELLÉS
+// historiques. Ils sont convertis en ids du catalogue au chargement
+// (voir src/components/members/seedConversion.js → buildConvertedBDEConfig).
 
 export const BDE_COLUMNS = [
   { id: 'direction',  title: '🏛️ Bureau & Direction' },
@@ -10,12 +13,15 @@ export const BDE_COLUMNS = [
   { id: 'transverse', title: '🧩 Membres transversaux' },
 ];
 
+/** Prénom utilisé pour les postes non pourvus (exclus du décompte des membres). */
+export const VACANT_FIRST_NAME = '[Poste vacant]';
+
 export const BDE_MEMBERS = [
   // ========== BUREAU ==========
   { id: 'bde_kenzo',   firstName: 'Kenzo',    lastName: '',              email: '', mainRole: 'Président',          badges: ['Président', 'Accès Banque', 'Accès Drive', 'Super Admin'], columnId: 'direction',  notes: 'Super Admin communauté WhatsApp' },
   { id: 'bde_bilal',   firstName: 'Bilal',    lastName: '',              email: '', mainRole: 'Trésorier',          badges: ['Trésorier', 'Accès Banque'],                               columnId: 'direction',  notes: '' },
   { id: 'bde_thainam',  firstName: 'Minh Anh',  lastName: '',              email: '', mainRole: 'Secrétaire Général',  badges: ['Secrétaire Général', 'Accès Drive'],                       columnId: 'direction',  notes: '' },
-  { id: 'bde_vp',       firstName: '[Poste vacant]', lastName: '',         email: '', mainRole: 'Vice-Président',      badges: [],                                                          columnId: 'direction',  notes: 'À pourvoir' },
+  { id: 'bde_vp',       firstName: VACANT_FIRST_NAME, lastName: '',        email: '', mainRole: 'Vice-Président',      badges: [],                                                          columnId: 'direction',  notes: 'À pourvoir' },
 
   // ========== PÔLE COMMUNICATION ==========
   { id: 'bde_capucine',       firstName: 'Capucine',   lastName: 'Fontanel',          email: '', mainRole: 'Respo Com',             badges: ['Respo Com', 'Respo Com Globale', 'Accès Insta', 'Accès TikTok', 'Membre Com'], columnId: 'com', notes: 'Responsable Com Globale' },
@@ -47,6 +53,7 @@ export const BDE_MEMBERS = [
 
 // ============================================================
 // Presets de permissions par rôle (mappés sur les IDs de dossiers)
+// Clés = libellés historiques (convertis en ids au chargement).
 // ============================================================
 export const BDE_ROLE_PERMISSIONS = {
   'Président': {
@@ -110,7 +117,7 @@ export const BDE_ROLE_PERMISSIONS = {
 };
 
 // ============================================================
-// Nouveaux presets à ajouter au store (si absents)
+// Presets officiels ajoutés / mis à jour au chargement
 // ============================================================
 export const BDE_NEW_PRESETS = {
   'Respo Com Interne':      BDE_ROLE_PERMISSIONS['Respo Com Interne'],
@@ -119,11 +126,24 @@ export const BDE_NEW_PRESETS = {
   'Vice-Président':         BDE_ROLE_PERMISSIONS['Vice-Président'],
 };
 
+/** Chiffres affichés dans le bandeau (calculés, jamais codés en dur). */
+export function bdeSeedSummary() {
+  const vacancies = BDE_MEMBERS.filter(m => m.firstName === VACANT_FIRST_NAME).length;
+  return {
+    members: BDE_MEMBERS.length - vacancies,
+    vacancies,
+    columns: BDE_COLUMNS.length,
+  };
+}
+
 // ============================================================
-// Construction de la config complète
+// Construction de la config BRUTE (libellés historiques)
 // ============================================================
+// Les permissions Drive individuelles sont calculées à partir du libellé
+// d'origine : deux rôles fusionnés dans le même id (ex. Respo Insta /
+// Respo TikTok → membre_communication) gardent leurs accès spécifiques.
 export function buildBDEConfig() {
-  const members = BDE_MEMBERS.map(m => ({ ...m }));
+  const members = BDE_MEMBERS.map(m => ({ ...m, badges: [...m.badges] }));
   const columns = BDE_COLUMNS.map(c => ({ ...c }));
   const drivePermissions = {};
 

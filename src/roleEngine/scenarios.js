@@ -1,8 +1,7 @@
 import {
   DEFAULT_WEIGHTS, DEFAULT_PENALTIES, DEFAULT_MIN_SCORE,
-  DEFAULT_POLE_TARGETS, ROLE_CATALOG,
+  DEFAULT_POLE_TARGETS, resolveCatalog, getCatalogRoles, capacityOf,
 } from './config.js';
-import { buildSlots } from './roles.js';
 import { buildScoreMatrix } from './scoring.js';
 import { runSolver, localSearch } from './solver.js';
 import { detectAlerts } from './alerts.js';
@@ -32,28 +31,46 @@ export const SCENARIO_PRESETS = {
   },
 };
 
-export function computePoleTargets(candidates, capacities, poleTargets = DEFAULT_POLE_TARGETS) {
-  const { minPoleSize, weightByDemand, weightByCapacity } = poleTargets;
+/**
+ * Pôles du catalogue qui portent au moins un rôle, dans l'ordre du catalogue.
+ * Les clés de regroupement sont des IDS de pôle (libellés via le catalogue).
+ */
+function polesWithRoles(roles) {
+  const ids = [];
+  roles.forEach(r => { if (!ids.includes(r.pole)) ids.push(r.pole); });
+  return ids;
+}
+
+/**
+ * Tailles cibles par pôle : mélange demande observée / capacités annoncées,
+ * avec un plancher minPoleSize. Les pôles dont la capacité totale est nulle
+ * n'ont pas de cible (ils ne peuvent pas être pourvus).
+ * @returns {Map<string, number>}  poleId → cible
+ */
+export function computePoleTargets(candidates, capacities, poleTargets = DEFAULT_POLE_TARGETS, catalog) {
+  const cat = resolveCatalog(catalog);
+  const { minPoleSize, weightByDemand, weightByCapacity } = { ...DEFAULT_POLE_TARGETS, ...(poleTargets || {}) };
+  const roles = getCatalogRoles(cat);
   const demand = {};
-  ROLE_CATALOG.forEach(role => { if (!demand[role.pole]) demand[role.pole] = 0; });
+  polesWithRoles(roles).forEach(p => { demand[p] = 0; });
   candidates.forEach(c => {
-    c.choices.forEach(roleId => {
-      const role = ROLE_CATALOG.find(r => r.id === roleId);
+    (c.choices || []).forEach(roleId => {
+      const role = cat.roles?.[roleId];
       if (role) demand[role.pole] = (demand[role.pole] || 0) + 1;
     });
   });
   const capacityByPole = {};
-  ROLE_CATALOG.forEach(role => {
-    const cap = capacities[role.id] ?? 0;
-    capacityByPole[role.pole] = (capacityByPole[role.pole] || 0) + cap;
+  roles.forEach(role => {
+    capacityByPole[role.pole] = (capacityByPole[role.pole] || 0) + capacityOf(role, capacities);
   });
   const totalCandidates = candidates.length;
   const totalCapacity = Object.values(capacityByPole).reduce((s, n) => s + n, 0) || 1;
   const targets = new Map();
   const totalDemand = Object.values(demand).reduce((s, n) => s + n, 0) || 1;
   Object.keys(capacityByPole).forEach(pole => {
+    if (!capacityByPole[pole]) return;
     const demandShare = (demand[pole] || 0) / totalDemand;
-    const capacityShare = (capacityByPole[pole] || 0) / totalCapacity;
+    const capacityShare = capacityByPole[pole] / totalCapacity;
     const share = weightByDemand * demandShare + weightByCapacity * capacityShare;
     targets.set(pole, Math.max(minPoleSize, Math.round(share * totalCandidates)));
   });
@@ -70,13 +87,16 @@ export function runScenario({
   constraints = DEFAULT_CONSTRAINTS,
   scenarioName,
   scenarioDescription,
+  catalog,
 }) {
-  const scoreMatrix = buildScoreMatrix(candidates, ROLE_CATALOG, weights, penalties, constraints);
-  const baseRun = runSolver(candidates, capacities, scoreMatrix, { minScore, lockedPairs });
+  const cat = resolveCatalog(catalog);
+  const roles = getCatalogRoles(cat);
+  const scoreMatrix = buildScoreMatrix(candidates, roles, weights, penalties, constraints, cat);
+  const baseRun = runSolver(candidates, capacities, scoreMatrix, { minScore, lockedPairs, catalog: cat });
 
-  const poleTargetsMap = computePoleTargets(candidates, capacities, poleTargets);
+  const poleTargetsMap = computePoleTargets(candidates, capacities, poleTargets, cat);
   let current = baseRun.assignments.map(a => ({ ...a }));
-  current = balancePoles(current, candidates, scoreMatrix, poleTargetsMap, minScore);
+  current = balancePoles(current, scoreMatrix, poleTargetsMap, minScore, cat);
 
   const improved = localSearch(current, scoreMatrix, { minScore, lockedPairs });
 
@@ -85,17 +105,18 @@ export function runScenario({
   const avgSatisfaction = scores.length ? scores.reduce((s, x) => s + x, 0) / scores.length : 0;
   const worstSatisfaction = scores.length ? Math.min(...scores) : 0;
 
+  // Effectifs par pôle (clés = ids de pôle)
   const poleSizes = {};
-  ROLE_CATALOG.forEach(r => { if (!poleSizes[r.pole]) poleSizes[r.pole] = 0; });
+  polesWithRoles(roles).forEach(p => { poleSizes[p] = 0; });
   improved.assignments.forEach(a => {
     if (!a.slotId || !a.candidateId) return;
-    const role = ROLE_CATALOG.find(r => r.id === a.roleId);
+    const role = cat.roles?.[a.roleId];
     if (role) poleSizes[role.pole] = (poleSizes[role.pole] || 0) + 1;
   });
 
   const alerts = detectAlerts({
     candidates, assignments: improved.assignments,
-    poleTargets: poleTargetsMap, poleSizes, minScore,
+    poleTargets: poleTargetsMap, poleSizes, minScore, catalog: cat,
   });
 
   return {
@@ -112,17 +133,17 @@ export function runScenario({
   };
 }
 
-function balancePoles(assignments, candidates, scoreMatrix, poleTargets, minScore) {
+function balancePoles(assignments, scoreMatrix, poleTargets, minScore, cat) {
   const current = assignments.map(a => ({ ...a }));
   const maxIter = 50;
+  const poleOf = (roleId) => cat.roles?.[roleId]?.pole;
 
   for (let iter = 0; iter < maxIter; iter++) {
     const sizes = {};
-    ROLE_CATALOG.forEach(r => { sizes[r.pole] = 0; });
     current.forEach(a => {
       if (!a.slotId || !a.candidateId) return;
-      const role = ROLE_CATALOG.find(r => r.id === a.roleId);
-      if (role) sizes[role.pole]++;
+      const pole = poleOf(a.roleId);
+      if (pole !== undefined) sizes[pole] = (sizes[pole] || 0) + 1;
     });
 
     let deficitPole = null, surplusPole = null;
@@ -138,15 +159,13 @@ function balancePoles(assignments, candidates, scoreMatrix, poleTargets, minScor
     for (let i = 0; i < current.length; i++) {
       const a = current[i];
       if (!a.slotId || !a.candidateId || a.locked) continue;
-      const roleA = ROLE_CATALOG.find(r => r.id === a.roleId);
-      if (!roleA || roleA.pole !== surplusPole) continue;
+      if (poleOf(a.roleId) !== surplusPole) continue;
 
       for (let j = 0; j < current.length; j++) {
         if (i === j) continue;
         const b = current[j];
         if (!b.slotId || !b.candidateId || b.locked) continue;
-        const roleB = ROLE_CATALOG.find(r => r.id === b.roleId);
-        if (!roleB || roleB.pole !== deficitPole) continue;
+        if (poleOf(b.roleId) !== deficitPole) continue;
 
         const sAonB = scoreMatrix.get(a.candidateId)?.get(b.roleId)?.total || 0;
         const sBonA = scoreMatrix.get(b.candidateId)?.get(a.roleId)?.total || 0;
@@ -171,10 +190,12 @@ function balancePoles(assignments, candidates, scoreMatrix, poleTargets, minScor
 }
 
 export function compareScenarios(baseInputs) {
-  const { candidates, capacities, minScore, lockedPairs, constraints } = baseInputs;
+  const { candidates, capacities, minScore, lockedPairs, constraints, catalog } = baseInputs;
+  const cat = resolveCatalog(catalog);
 
-  const scenarios = Object.entries(SCENARIO_PRESETS).map(([key, preset]) =>
+  const scenarios = Object.values(SCENARIO_PRESETS).map(preset =>
     runScenario({
+      catalog: cat,
       candidates, capacities,
       weights: preset.weights,
       penalties: preset.penalties,

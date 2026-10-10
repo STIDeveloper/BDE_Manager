@@ -1,45 +1,59 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Copy, Download, RefreshCw, Check, ZoomIn, ZoomOut } from 'lucide-react';
-import mermaid from 'mermaid';
 import { useStore } from '../../store';
+import { useCatalogMaps } from '../../core/useCatalog';
 import { generateOrgChart } from '../../utils/orgChartGenerator';
 import { toast } from '../ui/toastStore';
 
 export default function OrgChart() {
-  const store = useStore();
-  const { members, folders, rolePresets, theme } = store;
+  // Sélecteurs atomiques (Zustand v5) : pas de re-rendu sur les autres clés du store.
+  const members = useStore(s => s.members);
+  const folders = useStore(s => s.folders);
+  const rolePresets = useStore(s => s.rolePresets);
+  const theme = useStore(s => s.theme);
+  const catalog = useCatalogMaps();
+  const dark = theme === 'dark';
+
   const [svg, setSvg] = useState('');
+  const [renderError, setRenderError] = useState('');
   const [copied, setCopied] = useState(false);
   const [zoom, setZoom] = useState(1);
   const renderIdRef = useRef(0);
   const containerRef = useRef(null);
 
-  const code = React.useMemo(() =>
-    generateOrgChart({ members, folders, rolePresets }),
-    [members, folders, rolePresets]);
+  const code = useMemo(() =>
+    generateOrgChart({ members, folders, rolePresets }, { catalog, dark }),
+    [members, folders, rolePresets, catalog, dark]);
 
   useEffect(() => {
     let cancelled = false;
     const id = `mermaid-${++renderIdRef.current}`;
 
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: theme === 'dark' ? 'dark' : 'default',
-      securityLevel: 'loose',
-      fontFamily: 'Inter, system-ui, sans-serif',
-    });
-
-    mermaid.render(id, code)
-      .then(({ svg }) => {
-        if (!cancelled) setSvg(svg);
+    // Chargement différé de mermaid (~5 Mo) : uniquement quand l'organigramme est affiché
+    import('mermaid')
+      .then(({ default: mermaid }) => {
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: dark ? 'dark' : 'default',
+          // 'strict' : HTML des libellés assaini (DOMPurify), clics désactivés.
+          // Les données utilisateur sont en plus échappées par le générateur.
+          securityLevel: 'strict',
+          fontFamily: 'Inter, system-ui, sans-serif',
+        });
+        return mermaid.render(id, code);
+      })
+      .then(({ svg: out }) => {
+        if (!cancelled) { setSvg(out); setRenderError(''); }
       })
       .catch(err => {
         console.error('Mermaid render error:', err);
-        if (!cancelled) setSvg(`<p style="color:#ef4444">Erreur de rendu : ${err.message}</p>`);
+        // Message affiché en TEXTE (jamais injecté comme HTML : il peut citer
+        // des données utilisateur).
+        if (!cancelled) { setSvg(''); setRenderError(String(err?.message || err)); }
       });
 
     return () => { cancelled = true; };
-  }, [code, theme]);
+  }, [code, dark]);
 
   const handleCopy = async () => {
     try {
@@ -90,7 +104,7 @@ export default function OrgChart() {
         canvas.width = w * 2;
         canvas.height = h * 2;
         const ctx = canvas.getContext('2d');
-        ctx.fillStyle = theme === 'dark' ? '#09090b' : '#ffffff';
+        ctx.fillStyle = dark ? '#09090b' : '#ffffff';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.scale(2, 2);
         ctx.drawImage(img, 0, 0);
@@ -107,7 +121,7 @@ export default function OrgChart() {
         });
       };
       img.src = url;
-    } catch (err) {
+    } catch {
       toast.error('Téléchargement impossible');
     }
   };
@@ -131,12 +145,12 @@ export default function OrgChart() {
 
         <div className="flex items-center gap-1.5">
           <button onClick={() => setZoom(z => Math.max(0.5, z - 0.15))}
-            className="bg-elevated hover:bg-line border border-line text-ink p-2 rounded-lg transition-colors" title="Zoom -">
+            className="bg-elevated hover:bg-line border border-line text-ink p-2 rounded-lg transition-colors" title="Zoom -" aria-label="Dézoomer">
             <ZoomOut size={14} />
           </button>
           <span className="text-xs text-dim font-mono w-12 text-center">{Math.round(zoom * 100)}%</span>
           <button onClick={() => setZoom(z => Math.min(2.5, z + 0.15))}
-            className="bg-elevated hover:bg-line border border-line text-ink p-2 rounded-lg transition-colors" title="Zoom +">
+            className="bg-elevated hover:bg-line border border-line text-ink p-2 rounded-lg transition-colors" title="Zoom +" aria-label="Zoomer">
             <ZoomIn size={14} />
           </button>
           <button onClick={resetZoom}
@@ -166,12 +180,17 @@ export default function OrgChart() {
         <div
           ref={containerRef}
           className="overflow-auto p-4 min-h-[400px] max-h-[70vh] flex items-start justify-center"
-          style={{ background: theme === 'dark' ? '#09090b' : '#fafafa' }}
+          style={{ background: dark ? '#09090b' : '#fafafa' }}
         >
-          <div
-            style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', transition: 'transform 150ms' }}
-            dangerouslySetInnerHTML={{ __html: svg }}
-          />
+          {renderError ? (
+            <p role="alert" className="text-sm text-red-500">Erreur de rendu : {renderError}</p>
+          ) : (
+            /* SVG produit par mermaid en securityLevel 'strict' (assaini). */
+            <div
+              style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', transition: 'transform 150ms' }}
+              dangerouslySetInnerHTML={{ __html: svg }}
+            />
+          )}
         </div>
       </div>
 
