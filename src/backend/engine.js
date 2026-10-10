@@ -97,7 +97,14 @@ function cleanAuthUrl() {
   url.searchParams.delete('error');
   url.searchParams.delete('error_code');
   url.searchParams.delete('error_description');
-  window.history.replaceState(null, '', `${url.pathname}${url.search}#/team`);
+  // Retour prévu avant la connexion (ex. formulaire public #/f/<slug>), sinon Équipe & accès.
+  let target = '#/team';
+  try {
+    const saved = localStorage.getItem('bde-forms-return');
+    if (saved && /^#\/f\/[A-Za-z0-9_-]+/.test(saved)) target = saved;
+    localStorage.removeItem('bde-forms-return');
+  } catch { /* stockage indisponible */ }
+  window.history.replaceState(null, '', `${url.pathname}${url.search}${target}`);
   window.dispatchEvent(new HashChangeEvent('hashchange'));
   if (err) setBackendState({ error: err });
 }

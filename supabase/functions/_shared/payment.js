@@ -28,7 +28,7 @@ export async function handleCheckout(body, deps) {
   const cents = Number(ctx.amount_cents) || 0;
   if (cents < 100) throw new HttpError(400, cents > 0 ? 'Montant inférieur au minimum accepté par HelloAsso (1 €).' : 'Aucun paiement n’est attendu pour cette réponse.');
 
-  const base = `${deps.env.appUrl}/f/${encodeURIComponent(ctx.slug)}`;
+  const base = `${deps.env.appUrl}/#/f/${encodeURIComponent(ctx.slug)}`;
   const token = await deps.helloasso.token();
   const intent = await deps.helloasso.createIntent(token, {
     cents,

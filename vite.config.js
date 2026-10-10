@@ -55,6 +55,10 @@ function lazyChunksPlugin() {
         for (const dep of byName.get(file)?.imports ?? []) walkStatic(dep);
       };
       chunks.filter((c) => c.isEntry).forEach((c) => walkStatic(c.fileName));
+      // main.jsx charge l'application (App, modules, bandeau PWA) par import()
+      // dynamique pour garder la page publique #/f/ légère : ces imports du
+      // point d'entrée sont néanmoins nécessaires au démarrage → toujours précachés.
+      chunks.filter((c) => c.isEntry).forEach((c) => (c.dynamicImports ?? []).forEach(walkStatic));
 
       // 2) Fermeture (statique + dynamique) des chunks contenant une racine « lourde »
       const lazy = new Set();

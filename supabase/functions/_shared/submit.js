@@ -300,7 +300,7 @@ export async function handleSubmit({ body, origin, ip, userJwt }, deps) {
     if (deps.sendEmail && !ctx.edit) {
       const tasks = [];
       const editUrl = deps.env.appUrl && settings.allowEdit && settings.allowEdit !== 'never'
-        ? `${deps.env.appUrl}/f/${form.slug}?modifier=${editToken}` : null;
+        ? `${deps.env.appUrl}/#/f/${form.slug}?modifier=${editToken}` : null;
       if (settings.notifications?.respondentReceipt && email) {
         let summary;
         try {
