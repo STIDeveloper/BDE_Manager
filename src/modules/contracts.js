@@ -42,6 +42,7 @@
 //   volunteers: [{ id, memberId, role, slot? }],
 //   participants: [{ id, name, email?, memberId?, status: 'registered'|'waitlist'|'present'|'absent'|'cancelled', paid?, transactionId? }],
 //   review?: { summary, attendance, satisfaction?, lessons },
+//   checkin?: { tokens: { [participantId]: hex32 }, at: { [participantId]: ISO } },  // QR de présence
 //   createdAt, updatedAt } }
 //
 // ── calendar (useCalendarStore, src/modules/calendar/store.js) ──

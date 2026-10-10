@@ -11,6 +11,7 @@ import {
 } from './logic.js';
 import { useMembers } from './hooks.js';
 import { EmptyState, MemberSelect, ParticipantBadge, Progress } from './ui.jsx';
+import CheckinTools from './checkin/CheckinTools.jsx';
 
 const announcePromoted = (promoted) => {
   if (promoted?.length) toast.info('Liste d\'attente', `${promoted.map(p => p.name).join(', ')} passe(nt) en inscrit(s).`);
@@ -112,7 +113,9 @@ export default function ParticipantsTab({ ev, canWrite }) {
           <button type="button" aria-pressed={mode === 'checkin'} onClick={() => setMode('checkin')}
             className={`px-3 py-2 text-sm flex items-center gap-1.5 border-l border-line ${mode === 'checkin' ? 'bg-elevated text-ink' : 'text-dim'}`}><ClipboardCheck size={14} aria-hidden="true" /> Pointage</button>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {/* Billets QR personnels et scanner de présence (./checkin/) */}
+          <CheckinTools ev={ev} canWrite={canWrite} />
           {canWrite && <button type="button" className="btn-secondary" onClick={() => setImporting(true)}><FileUp size={14} aria-hidden="true" /> Importer</button>}
           <button type="button" className="btn-secondary" onClick={exportCsv} disabled={!participants.length}><Download size={14} aria-hidden="true" /> CSV</button>
         </div>

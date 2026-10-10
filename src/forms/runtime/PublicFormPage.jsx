@@ -21,6 +21,9 @@ import { useRoute } from '../../core/router.js';
 import { toast } from '../../components/ui/toastStore.js';
 import { summarizeAnswers, flattenItems, formatMoneyFr, isEmpty } from '../engine/index.js';
 import FormRenderer from './FormRenderer.jsx';
+import { EmbedHeightReporter, EmbedBlocked } from '../share/embed.jsx';
+import { checkEmbed } from '../share/embedRuntime.js';
+import { rememberReceipt } from '../vote/receipts.js';
 import Shell, { StateCard } from './Shell.jsx';
 import RichText from './RichText.jsx';
 import Turnstile from './Turnstile.jsx';
@@ -207,6 +210,13 @@ function Confirmation({ data, result, definition, submitted, onRestart }) {
   const canEdit = result.editToken && settings.allowEdit && settings.allowEdit !== 'never';
   const editLink = canEdit ? pageLink(slug, { modifier: result.editToken }) : null;
   const redirect = safeRedirect(conf.redirectUrl);
+
+  // Vote : le reçu est conservé sur l'appareil (carnet de reçus du portail).
+  useEffect(() => {
+    if (data.form.kind === 'vote' && result.receiptCode && data.form.id) {
+      rememberReceipt({ formId: data.form.id, code: result.receiptCode, slug, title: data.form.title });
+    }
+  }, [data.form, result.receiptCode, slug]);
 
   useEffect(() => {
     if (countdown === null) return undefined;
@@ -691,6 +701,9 @@ function FormPageInner({ slug, query, onReload }) {
   const { data, initial } = state;
   const { definition, form, viewer } = data;
   const s = definition.settings || {};
+  // Intégration (iframe) : refusée si le site parent n'est pas autorisé dans les réglages.
+  const emb = checkEmbed(s.embed);
+  if (emb.embedded && !emb.allowed) return <EmbedBlocked reason={emb.reason} slug={form.slug} theme={definition.theme} />;
   const editing = !!initial.editToken;
   const os = openState(data);
   if (!editing && os.state === 'not_yet') {
@@ -730,5 +743,10 @@ export default function PublicFormPage() {
   if (!slug) {
     return <Shell><StateCard icon={FileSearch} title="Lien incomplet"><p className="fr-muted">L’adresse doit être de la forme …/#/f/nom-du-formulaire.</p></StateCard></Shell>;
   }
-  return <FormPageInner key={`${slug}|${queryString}|${reload}`} slug={slug} query={query} onReload={() => setReload(r => r + 1)} />;
+  return (
+    <>
+      <EmbedHeightReporter slug={slug} />
+      <FormPageInner key={`${slug}|${queryString}|${reload}`} slug={slug} query={query} onReload={() => setReload(r => r + 1)} />
+    </>
+  );
 }

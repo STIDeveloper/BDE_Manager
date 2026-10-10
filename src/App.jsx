@@ -27,6 +27,12 @@ const VerifyPage = lazy(() => import('./components/documents/VerifyPage'));
 // Page répondant des formulaires (#/f/<slug>), livrée par le Studio Formulaires.
 const publicFormLoader = Object.values(import.meta.glob('./forms/runtime/PublicFormPage.jsx'))[0];
 const PublicFormPage = publicFormLoader ? lazy(publicFormLoader) : null;
+// Autres pages publiques (portail, vérification de bulletin, billet d'événement).
+const PUBLIC_PAGES = {
+  espace: lazy(() => import('./forms/portal/PortalPage.jsx')),
+  bulletin: lazy(() => import('./forms/vote/BallotCheckPage.jsx')),
+  billet: lazy(() => import('./modules/events/checkin/TicketPage.jsx')),
+};
 
 // Écrans des modules : src/modules/<module>/Page.jsx, découverts
 // automatiquement et chargés à la demande. Un module absent n'apparaît pas.
@@ -65,7 +71,7 @@ const SECTIONS = [
 
 // Routes publiques, affichées hors de la coque de l'application.
 // #/f/<slug> : page répondant d'un formulaire (accès public, sans la coque).
-const PUBLIC_SECTIONS = new Set(['verifier', 'f']);
+const PUBLIC_SECTIONS = new Set(['verifier', 'f', 'espace', 'bulletin', 'billet']);
 
 // Sections affichées dans la barre inférieure mobile (le reste : menu « Plus »).
 const MOBILE_PRIMARY = ['dashboard', 'kanban', 'calendar', 'documents'];
@@ -315,6 +321,15 @@ export default function App() {
     return (
       <Suspense fallback={<Loading label="Chargement du formulaire…" />}>
         <PublicFormPage />
+        <ToastContainer />
+      </Suspense>
+    );
+  }
+  if (PUBLIC_PAGES[route.section]) {
+    const Page = PUBLIC_PAGES[route.section];
+    return (
+      <Suspense fallback={<Loading />}>
+        <Page />
         <ToastContainer />
       </Suspense>
     );

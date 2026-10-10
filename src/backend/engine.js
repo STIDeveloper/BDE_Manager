@@ -101,7 +101,7 @@ function cleanAuthUrl() {
   let target = '#/team';
   try {
     const saved = localStorage.getItem('bde-forms-return');
-    if (saved && /^#\/f\/[A-Za-z0-9_-]+/.test(saved)) target = saved;
+    if (saved && /^#\/(f\/[A-Za-z0-9_-]+|espace$)/.test(saved)) target = saved;
     localStorage.removeItem('bde-forms-return');
   } catch { /* stockage indisponible */ }
   window.history.replaceState(null, '', `${url.pathname}${url.search}${target}`);
