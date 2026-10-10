@@ -4,6 +4,7 @@ import { useStore } from '../store';
 import { useRolesStore } from '../roleEngine/store';
 import { STORE_VERSION } from '../core/migrations';
 import { toast } from './ui/toastStore';
+import { exportModules, importModules } from '../core/moduleRegistry';
 import { confirmDialog } from './ui/confirmStore';
 import {
   buildFullBackup, inspectBackup, backupSummaryLines, backupFileName,
@@ -14,7 +15,8 @@ import {
 // ============================================================
 // Format : voir src/components/members/backupHelpers.js.
 //   { app, version, exportedAt, data: {…store principal…},
-//     rolesEngine?: useRolesStore.exportConfig() }
+//     rolesEngine?: useRolesStore.exportConfig(),
+//     modules?: { [module]: données } }   ← trésorerie, événements, agenda…
 // `rolesEngine` (poids, pénalités, score minimal, contraintes, verrous du
 // moteur de rôles) est un champ OPTIONNEL au premier niveau : les anciens
 // backups sans ce champ restent importables.
@@ -39,7 +41,10 @@ function currentFullBackup() {
   } catch (err) {
     console.error('[backup] export de la config du moteur impossible', err);
   }
-  return buildFullBackup(useStore.getState().exportAllData(), engine);
+  const backup = buildFullBackup(useStore.getState().exportAllData(), engine);
+  // Modules (trésorerie, événements, agenda…) : champ `modules` facultatif.
+  backup.modules = exportModules();
+  return backup;
 }
 
 export default function BackupButtons() {
@@ -126,6 +131,17 @@ export default function BackupButtons() {
       } catch (err) {
         console.error(err);
         toast.warn('Config du moteur ignorée', err?.message || 'Configuration du moteur de rôles invalide.');
+      }
+    }
+
+    // 4. Modules (absents des anciennes sauvegardes : ils restent alors intacts).
+    if (payload.modules && typeof payload.modules === 'object') {
+      try {
+        const restored = importModules(payload.modules);
+        if (restored.length) engineMsg += ` + ${restored.join(', ')}`;
+      } catch (err) {
+        console.error(err);
+        toast.warn('Certains modules n’ont pas été restaurés', err?.message || '');
       }
     }
 

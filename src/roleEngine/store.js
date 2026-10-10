@@ -10,6 +10,7 @@ import { BDE_MONTREUIL_PRESET } from './constraints.js';
 import { parseRoleLabel } from './roles.js';
 import { detectContradictions } from './signals.js';
 import { useStore } from '../store.js';
+import { registerModule } from '../core/moduleRegistry.js';
 import {
   getActiveCatalog, subscribeCatalog, capacitiesOf, DEFAULT_ROLES as CATALOG_DEFAULT_ROLES,
 } from '../core/catalog.js';
@@ -386,6 +387,18 @@ subscribeCatalog((catalog) => {
   useRolesStore.setState(patch);
   clearTimeout(recomputeTimer);
   recomputeTimer = setTimeout(() => useRolesStore.getState().recompute(), 150);
+});
+
+// Tranches synchronisables : candidats (données personnelles) et réglages.
+registerModule({
+  name: 'rolesEngine',
+  label: 'Moteur de rôles',
+  exportData: () => ({}),   // sauvegardé via exportConfig (champ rolesEngine du backup)
+  importData: () => {},
+  slices: [
+    { collection: 'recruitment.candidates', store: useRolesStore, key: 'candidates', kind: 'array', capability: 'recruitment', sensitive: true },
+    { collection: 'recruitment.settings', store: useRolesStore, key: ['weights', 'penalties', 'minScore', 'lockedPairs', 'constraints'], kind: 'singleton', capability: 'recruitment' },
+  ],
 });
 
 // Synchronisation entre onglets (voir core/crossTabSync.js).

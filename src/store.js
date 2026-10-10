@@ -12,6 +12,7 @@ import {
 } from './core/catalog.js';
 import { migrateMainStore, STORE_VERSION } from './core/migrations.js';
 import { DEFAULT_ORGANIZATION } from './documents/context.js';
+import { registerModule } from './core/moduleRegistry.js';
 import { migrateMemberRole, migratePresets, resolveRoleId } from './core/roleAliases.js';
 
 const DEFAULT_BADGES = [
@@ -1318,3 +1319,31 @@ export const CONFIG_STATUS_META = {
   empty:    { label: 'Non configuré', color: 'zinc',    icon: '○' },
   mismatch: { label: 'Hors preset',   color: 'red',     icon: '⚠' },
 };
+// ------------------------------------------------------------
+// Tranches synchronisables du store principal (backend collaboratif)
+// ------------------------------------------------------------
+// La sauvegarde JSON du store principal reste gérée par exportAllData /
+// importAllData : ce module ne déclare donc que les tranches de synchro.
+registerModule({
+  name: 'core',
+  label: 'Données principales',
+  exportData: () => ({}),
+  importData: () => {},
+  slices: [
+    { collection: 'core.members', store: useStore, key: 'members', kind: 'array', capability: 'members', sensitive: true },
+    { collection: 'core.columns', store: useStore, key: 'columns', kind: 'array', capability: 'members' },
+    { collection: 'core.badges', store: useStore, key: 'availableBadges', kind: 'singleton', capability: 'members' },
+    { collection: 'core.poles', store: useStore, key: 'poles', kind: 'map', capability: 'catalog' },
+    { collection: 'core.levels', store: useStore, key: 'levels', kind: 'map', capability: 'catalog' },
+    { collection: 'core.roles', store: useStore, key: 'roles', kind: 'map', capability: 'catalog' },
+    { collection: 'core.folders', store: useStore, key: 'folders', kind: 'array', capability: 'drive' },
+    { collection: 'core.folderTags', store: useStore, key: 'folderTags', kind: 'array', capability: 'drive' },
+    { collection: 'core.drivePermissions', store: useStore, key: 'drivePermissions', kind: 'map', capability: 'drive' },
+    { collection: 'core.permissionNotes', store: useStore, key: 'permissionNotes', kind: 'map', capability: 'drive' },
+    { collection: 'core.rolePresets', store: useStore, key: 'rolePresets', kind: 'map', capability: 'drive' },
+    { collection: 'core.organization', store: useStore, key: 'organization', kind: 'singleton', capability: 'organization' },
+    { collection: 'core.documentLog', store: useStore, key: 'documentLog', kind: 'array', capability: 'documents', sensitive: true },
+    // Coffre : uniquement la version CHIFFRÉE (sel, vérificateur, blob AES-GCM).
+    { collection: 'core.vault', store: useStore, key: ['vaultSalt', 'vaultVerifier', 'vaultEntriesBlob'], kind: 'singleton', capability: 'vault', sensitive: true },
+  ],
+});

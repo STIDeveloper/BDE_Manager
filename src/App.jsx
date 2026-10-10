@@ -1,5 +1,8 @@
-import { useEffect, useState, useCallback, lazy, Suspense } from 'react';
-import { Lock, LayoutDashboard, BarChart3, FolderTree, Network, Settings2, FileText, Loader2 } from 'lucide-react';
+import { useEffect, useState, useCallback, useMemo, lazy, Suspense, useId } from 'react';
+import {
+  Lock, LayoutDashboard, BarChart3, FolderTree, Network, Settings2, FileText, Loader2,
+  Home, CalendarDays, PartyPopper, Wallet, IdCard, Repeat, MoreHorizontal, X,
+} from 'lucide-react';
 import { useStore } from './store';
 import KanbanBoard from './components/KanbanBoard';
 import Stats from './components/Stats';
@@ -12,31 +15,67 @@ import UndoButtons from './components/UndoButtons';
 import { ToastContainer } from './components/ui/Toast';
 import ConfirmHost from './components/ui/ConfirmHost';
 import RolesManager from './components/roles/manager/RolesManager';
+import { navigate, useRoute } from './core/router';
 
 // Studio documents chargé à la demande (modèles + moteurs de rendu).
 const DocumentsStudio = lazy(() => import('./components/documents/DocumentsStudio'));
 
-const TABS = [
-  { id: 'kanban',    label: 'Membres',      short: 'Membres', icon: LayoutDashboard },
-  { id: 'stats',     label: 'Stats',        short: 'Stats',   icon: BarChart3 },
-  { id: 'org',       label: 'Organisation', short: 'Orga',    icon: Network },
-  { id: 'drive',     label: 'Drive',        short: 'Drive',   icon: FolderTree },
-  { id: 'documents', label: 'Documents',    short: 'Docs',    icon: FileText },
-  { id: 'sensitive', label: 'Coffre',       short: 'Coffre',  icon: Lock },
-];
-const TAB_IDS = new Set(TABS.map(t => t.id));
+// Écrans des modules : src/modules/<module>/Page.jsx, découverts
+// automatiquement et chargés à la demande. Un module absent n'apparaît pas.
+const modulePages = import.meta.glob('./modules/*/Page.jsx');
+const MODULE_PAGES = Object.fromEntries(
+  Object.entries(modulePages).map(([path, loader]) => [path.split('/')[2], lazy(loader)])
+);
 
-// L'onglet actif est reflété dans l'URL (#/drive…) : le rechargement, le
-// bouton Retour et les raccourcis de l'application installée le conservent.
-const readTabFromHash = () => {
-  const id = window.location.hash.replace(/^#\/?/, '').split('/')[0];
-  return TAB_IDS.has(id) ? id : 'kanban';
-};
+// Sections, groupées pour la barre latérale. `module` = écran de module.
+const SECTIONS = [
+  { group: 'Pilotage', items: [
+    { id: 'dashboard', label: 'Accueil', short: 'Accueil', icon: Home, module: 'dashboard' },
+    { id: 'calendar', label: 'Agenda', short: 'Agenda', icon: CalendarDays, module: 'calendar' },
+  ] },
+  { group: 'Équipe', items: [
+    { id: 'kanban', label: 'Membres', short: 'Membres', icon: LayoutDashboard },
+    { id: 'membership', label: 'Adhésions', short: 'Adhésions', icon: IdCard, module: 'membership' },
+    { id: 'org', label: 'Organisation', short: 'Orga', icon: Network },
+    { id: 'handover', label: 'Passations', short: 'Passation', icon: Repeat, module: 'handover' },
+  ] },
+  { group: 'Activités', items: [
+    { id: 'events', label: 'Événements', short: 'Événements', icon: PartyPopper, module: 'events' },
+    { id: 'finance', label: 'Trésorerie', short: 'Tréso', icon: Wallet, module: 'finance' },
+  ] },
+  { group: 'Outils', items: [
+    { id: 'documents', label: 'Documents', short: 'Docs', icon: FileText },
+    { id: 'drive', label: 'Drive', short: 'Drive', icon: FolderTree },
+    { id: 'stats', label: 'Statistiques', short: 'Stats', icon: BarChart3 },
+    { id: 'sensitive', label: 'Coffre-fort', short: 'Coffre', icon: Lock },
+  ] },
+];
+
+// Sections affichées dans la barre inférieure mobile (le reste : menu « Plus »).
+const MOBILE_PRIMARY = ['dashboard', 'kanban', 'calendar', 'documents'];
+
+function Loading({ label = 'Chargement…' }) {
+  return (
+    <div role="status" className="flex items-center gap-2 text-sm text-dim py-10 justify-center">
+      <Loader2 size={16} className="animate-spin" aria-hidden="true" /> {label}
+    </div>
+  );
+}
 
 export default function App() {
   const theme = useStore(s => s.theme);
-  const [activeTab, setActiveTab] = useState(readTabFromHash);
   const [rolesManagerOpen, setRolesManagerOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const route = useRoute();
+  const moreId = useId();
+
+  // Sections disponibles (un module sans écran est masqué).
+  const sections = useMemo(() => SECTIONS
+    .map(g => ({ ...g, items: g.items.filter(i => !i.module || MODULE_PAGES[i.module]) }))
+    .filter(g => g.items.length), []);
+  const allItems = useMemo(() => sections.flatMap(g => g.items), [sections]);
+  const defaultId = allItems.some(i => i.id === 'dashboard') ? 'dashboard' : 'kanban';
+  const active = allItems.find(i => i.id === route.section) || allItems.find(i => i.id === defaultId);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -45,20 +84,42 @@ export default function App() {
     root.style.colorScheme = theme;
   }, [theme]);
 
+  // Ancien lien / URL vide : on normalise vers la section par défaut.
   useEffect(() => {
-    const onHash = () => setActiveTab(readTabFromHash());
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
-  }, []);
+    if (!allItems.some(i => i.id === route.section)) {
+      window.history.replaceState(null, '', `#/${defaultId}`);
+    }
+  }, [route.section, allItems, defaultId]);
+
+  useEffect(() => { window.scrollTo({ top: 0 }); }, [active.id]);
 
   const goTo = useCallback((id) => {
-    if (id === activeTab) return;
-    window.location.hash = `/${id}`;
-    setActiveTab(id);
-    window.scrollTo({ top: 0 });
-  }, [activeTab]);
+    setMoreOpen(false);
+    if (id !== route.section) navigate(id);
+  }, [route.section]);
 
-  const activeLabel = TABS.find(t => t.id === activeTab)?.label;
+  const renderSection = () => {
+    if (active.module) {
+      const Page = MODULE_PAGES[active.module];
+      return (
+        <Suspense fallback={<Loading label={`Chargement : ${active.label}…`} />}>
+          <Page />
+        </Suspense>
+      );
+    }
+    switch (active.id) {
+      case 'kanban': return <KanbanBoard />;
+      case 'stats': return <Stats />;
+      case 'org': return <OrganisationTab />;
+      case 'drive': return <DriveManager />;
+      case 'sensitive': return <Vault />;
+      case 'documents': return <Suspense fallback={<Loading label="Chargement du studio documents…" />}><DocumentsStudio /></Suspense>;
+      default: return null;
+    }
+  };
+
+  const mobilePrimary = MOBILE_PRIMARY.map(id => allItems.find(i => i.id === id)).filter(Boolean);
+  const activeInMore = !mobilePrimary.some(i => i.id === active.id);
 
   return (
     <div className="min-h-screen min-h-[100dvh] flex flex-col bg-base">
@@ -71,31 +132,9 @@ export default function App() {
           <h1 className="text-[15px] font-bold tracking-tight text-ink flex items-center gap-2.5 shrink-0">
             <span className="bg-blue-600 text-white px-2 py-1 rounded-md text-xs font-bold" aria-hidden="true">BDE</span>
             <span className="font-semibold">Manager</span>
-            <span className="sr-only"> — {activeLabel}</span>
+            <span className="text-dim font-medium hidden sm:inline md:hidden">· {active.label}</span>
+            <span className="sr-only"> — {active.label}</span>
           </h1>
-
-          {/* Navigation principale (tablette / ordinateur) */}
-          <nav aria-label="Sections" className="hidden md:block min-w-0">
-            <div className="flex bg-elevated p-0.5 rounded-lg border border-line overflow-x-auto">
-              {TABS.map(t => {
-                const Icon = t.icon;
-                const isActive = activeTab === t.id;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => goTo(t.id)}
-                    aria-current={isActive ? 'page' : undefined}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 ${
-                      isActive ? 'bg-surface text-ink shadow-sm' : 'text-dim hover:text-ink'
-                    }`}>
-                    <Icon size={14} aria-hidden="true" />
-                    {t.label}
-                  </button>
-                );
-              })}
-            </div>
-          </nav>
 
           <div className="flex items-center gap-1 shrink-0">
             <button
@@ -114,49 +153,116 @@ export default function App() {
         </div>
       </header>
 
-      <main id="main" tabIndex={-1} className="flex-1 w-full p-4 sm:p-6 pb-24 md:pb-6 focus:outline-none">
-        {activeTab === 'kanban' && <KanbanBoard />}
-        {activeTab === 'stats' && <Stats />}
-        {activeTab === 'org' && <OrganisationTab />}
-        {activeTab === 'drive' && <DriveManager />}
-        {activeTab === 'documents' && (
-          <Suspense fallback={(
-            <div role="status" className="flex items-center gap-2 text-sm text-dim py-10 justify-center">
-              <Loader2 size={16} className="animate-spin" aria-hidden="true" /> Chargement du studio documents…
+      <div className="flex-1 flex min-h-0">
+        {/* Barre latérale (tablette / ordinateur) */}
+        <nav aria-label="Sections" className="hidden md:flex flex-col w-52 lg:w-56 shrink-0 border-r border-line bg-surface/60 sticky top-[57px] self-start h-[calc(100dvh-57px)] overflow-y-auto py-3">
+          {sections.map(g => (
+            <div key={g.group} className="mb-3">
+              <p className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted">{g.group}</p>
+              <ul>
+                {g.items.map(i => {
+                  const Icon = i.icon;
+                  const isActive = active.id === i.id;
+                  return (
+                    <li key={i.id}>
+                      <button
+                        type="button"
+                        onClick={() => goTo(i.id)}
+                        aria-current={isActive ? 'page' : undefined}
+                        className={`w-[calc(100%-1rem)] mx-2 flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 ${
+                          isActive ? 'bg-blue-500/10 text-blue-500 font-semibold' : 'text-dim hover:text-ink hover:bg-elevated'
+                        }`}
+                      >
+                        <Icon size={16} aria-hidden="true" />
+                        {i.label}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
-          )}>
-            <DocumentsStudio />
-          </Suspense>
-        )}
-        {activeTab === 'sensitive' && <Vault />}
-      </main>
+          ))}
+        </nav>
 
-      {/* Barre de navigation inférieure (mobile) — usage au pouce, style application */}
+        <main id="main" tabIndex={-1} className="flex-1 min-w-0 w-full p-4 sm:p-6 pb-24 md:pb-6 focus:outline-none">
+          {renderSection()}
+        </main>
+      </div>
+
+      {/* Barre de navigation inférieure (mobile) */}
       <nav
-        aria-label="Sections"
+        aria-label="Sections principales"
         className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-surface/95 backdrop-blur-md border-t border-line pb-[env(safe-area-inset-bottom)]"
       >
-        <div className="grid grid-cols-6">
-          {TABS.map(t => {
+        <div className="grid" style={{ gridTemplateColumns: `repeat(${mobilePrimary.length + 1}, minmax(0, 1fr))` }}>
+          {mobilePrimary.map(t => {
             const Icon = t.icon;
-            const isActive = activeTab === t.id;
+            const isActive = active.id === t.id;
             return (
               <button
                 key={t.id}
                 type="button"
                 onClick={() => goTo(t.id)}
                 aria-current={isActive ? 'page' : undefined}
-                className={`flex flex-col items-center justify-center gap-0.5 min-h-[56px] text-[10px] font-medium transition-colors focus:outline-none focus-visible:bg-elevated ${
-                  isActive ? 'text-blue-500' : 'text-dim'
-                }`}>
+                className={`flex flex-col items-center justify-center gap-0.5 min-h-[56px] text-[10px] font-medium transition-colors focus:outline-none focus-visible:bg-elevated ${isActive ? 'text-blue-500' : 'text-dim'}`}>
                 <Icon size={20} aria-hidden="true" />
                 <span className="truncate max-w-full px-1" aria-hidden="true">{t.short}</span>
                 <span className="sr-only">{t.label}</span>
               </button>
             );
           })}
+          <button
+            type="button"
+            onClick={() => setMoreOpen(o => !o)}
+            aria-expanded={moreOpen}
+            aria-controls={moreId}
+            className={`flex flex-col items-center justify-center gap-0.5 min-h-[56px] text-[10px] font-medium transition-colors focus:outline-none focus-visible:bg-elevated ${activeInMore || moreOpen ? 'text-blue-500' : 'text-dim'}`}>
+            <MoreHorizontal size={20} aria-hidden="true" />
+            <span aria-hidden="true">{activeInMore ? active.short : 'Plus'}</span>
+            <span className="sr-only">Autres sections</span>
+          </button>
         </div>
       </nav>
+
+      {/* Menu « Plus » (mobile) */}
+      {moreOpen && (
+        <div className="md:hidden fixed inset-0 z-[45]" onClick={() => setMoreOpen(false)}>
+          <div className="absolute inset-0 bg-black/40" aria-hidden="true" />
+          <div
+            id={moreId}
+            role="dialog"
+            aria-label="Toutes les sections"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => { if (e.key === 'Escape') setMoreOpen(false); }}
+            className="absolute inset-x-0 bottom-0 bg-surface border-t border-line rounded-t-2xl p-4 pb-[calc(5rem+env(safe-area-inset-bottom))] max-h-[80dvh] overflow-y-auto animate-fade-in"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <p className="font-semibold text-ink">Toutes les sections</p>
+              <button type="button" onClick={() => setMoreOpen(false)} aria-label="Fermer" className="tap p-2 text-dim hover:text-ink rounded-lg">
+                <X size={18} aria-hidden="true" />
+              </button>
+            </div>
+            {sections.map(g => (
+              <div key={g.group} className="mb-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted mb-1.5">{g.group}</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {g.items.map(i => {
+                    const Icon = i.icon;
+                    const isActive = active.id === i.id;
+                    return (
+                      <button key={i.id} type="button" onClick={() => goTo(i.id)} aria-current={isActive ? 'page' : undefined}
+                        className={`flex flex-col items-center gap-1 rounded-xl border p-3 text-xs font-medium transition-colors ${isActive ? 'border-blue-500/40 bg-blue-500/10 text-blue-500' : 'border-line bg-elevated text-ink'}`}>
+                        <Icon size={20} aria-hidden="true" />
+                        {i.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {rolesManagerOpen && (
         <RolesManager variant="fullscreen" onClose={() => setRolesManagerOpen(false)} />

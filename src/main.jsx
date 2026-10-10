@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import './modules/index.js';
 import App from './App.jsx';
 import PwaUpdatePrompt from './components/pwa/PwaUpdatePrompt.jsx';
 import './index.css';
