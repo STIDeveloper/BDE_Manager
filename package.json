@@ -14,7 +14,8 @@
     "lint": "eslint .",
     "test": "node --test \"src/**/*.test.js\"",
     "check": "npm run lint && npm test && npm run build",
-    "icons:maskable": "node scripts/generate-maskable-icons.mjs"
+    "icons:maskable": "node scripts/generate-maskable-icons.mjs",
+    "build:edge": "node scripts/build-edge.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

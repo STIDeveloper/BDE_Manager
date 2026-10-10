@@ -40,6 +40,11 @@ create or replace function storage.foldername(name text) returns text[] language
 $$;
 
 grant usage on schema public, auth, storage to anon, authenticated, service_role;
+-- Comme Supabase : tout nouvel objet du schéma public est accordé par défaut
+-- à anon / authenticated / service_role (les migrations doivent retirer).
+alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
+alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
+alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
 grant select on auth.users to service_role;
 grant execute on function auth.uid() to anon, authenticated, service_role;
 grant select, insert, update, delete on storage.objects to authenticated;

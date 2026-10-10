@@ -1,7 +1,7 @@
 // ============================================================
 // Validation hors ligne de la migration Supabase (schéma + RLS + RPC)
 // ============================================================
-// Exécute supabase/migrations/0001_init.sql dans PGlite (Postgres 17 en
+// Exécute supabase/migrations/0001_init.sql puis 0002_forms.sql dans PGlite (Postgres 17 en
 // WebAssembly, sans Docker) avec un bouchon des schémas auth / storage, puis
 // rejoue des scénarios multi-utilisateurs en se connectant comme le ferait
 // Supabase (rôle « authenticated » ou « anon » + identifiant JWT).
@@ -11,6 +11,8 @@
 //   node supabase/validation/validate.mjs <dossier-temporaire>
 // (ou variable d'environnement PGLITE_DIR)
 //
+// Les scénarios Formulaires (forms-scenarios.mjs) exigent la copie du moteur :
+//   node scripts/build-edge.mjs
 // Code de sortie 0 si tous les contrôles passent, 1 sinon.
 // ============================================================
 
@@ -28,6 +30,7 @@ if (!pgliteDir) {
 const { PGlite } = await import(pathToFileURL(join(pgliteDir, 'node_modules', '@electric-sql', 'pglite', 'dist', 'index.js')).href);
 
 const migration = readFileSync(join(here, '..', 'migrations', '0001_init.sql'), 'utf8');
+const migrationForms = readFileSync(join(here, '..', 'migrations', '0002_forms.sql'), 'utf8');
 const stub = readFileSync(join(here, 'supabase_stub.sql'), 'utf8');
 
 const db = new PGlite();
@@ -59,6 +62,9 @@ await db.exec(migration);
 check('migration exécutée', true);
 await db.exec(migration);
 check('migration ré-exécutable (idempotente)', true);
+await db.exec(migrationForms);
+await db.exec(migrationForms);
+check('migration 0002 (formulaires) exécutée deux fois (idempotente)', true);
 const rls = await db.query(`select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity`);
 check('RLS activée sur toutes les tables publiques', rls.rows.length === 0, JSON.stringify(rls.rows));
@@ -179,6 +185,10 @@ check('membre en écriture : dépôt dans son espace', !(await fails(U.alice, `i
 check('non-membre : dépôt refusé', !!(await fails(U.bob, `insert into storage.objects (bucket_id, name) values ('attachments', $1)`, [`${wsA}/f2`])));
 check('non-membre : fichier invisible', (await as(U.bob, `select 1 from storage.objects where name like $1`, [`${wsA}/%`])).rows.length === 0);
 check('bucket privé', (await db.query(`select public from storage.buckets where id = 'attachments'`)).rows[0].public === false);
+
+// Studio Formulaires (0002) : publication, envois (cœur de forms-submit),
+// RLS, vote anonyme, automatisations, paiement, messages.
+await (await import('./forms-scenarios.mjs')).run({ db, as, fails, check, U, wsA, wsB });
 
 console.log(`\nRésultat : ${passed} contrôles réussis, ${failed} en échec.`);
 await db.close();
