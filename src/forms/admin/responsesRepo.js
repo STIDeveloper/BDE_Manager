@@ -22,7 +22,8 @@
 //   repo.remove(rows) / repo.restore(rows)
 //   repo.addNote(id, text) / repo.history(id)
 //   repo.fileUrl(ref, row) → URL (signée ou blob locale)
-//   repo.subscribe(cb) → désabonnement (écoute locale ou interrogation périodique)
+//   repo.subscribe(cb) → désabonnement (écoute locale ; serveur : temps réel, repli sur interrogation périodique)
+//   repo.funnel → () → entonnoir anonymisé des brouillons (serveur, migration 0003) ; null en local
 //   repo.versions() → { [version]: definition } (serveur)
 //   repo.capabilities : { mode, notes, history, files, email, live, restore, drafts }
 // ============================================================
@@ -196,7 +197,7 @@ function serverRepo({ serverFormId }) {
   const idsOf = rows => rows.map(r => (typeof r === 'object' ? r.id : r));
 
   return {
-    capabilities: { mode: 'server', notes: true, history: true, files: true, email: 'brevo', live: 'poll', restore: true, drafts: false },
+    capabilities: { mode: 'server', notes: true, history: true, files: true, email: 'brevo', live: typeof api.subscribeResponses === 'function' ? 'realtime' : 'poll', restore: true, drafts: typeof api.getFormFunnel === 'function' },
     list,
     async loadAll({ filters = {}, sort, onProgress, max = MAX_LOAD } = {}) {
       const first = await list({ filters, page: 1, pageSize: SERVER_PAGE, sort });
@@ -240,12 +241,25 @@ function serverRepo({ serverFormId }) {
       return versionsCache;
     },
     sendEmail: ({ rows, subject, message }) => api.sendFormEmail({ responseIds: idsOf(rows), subject, message }),
-    /** Interrogation périodique : la table des réponses n'est pas diffusée en temps réel. */
+    funnel: typeof api.getFormFunnel === 'function' ? () => api.getFormFunnel(serverFormId) : null,
+    /**
+     * Temps réel (migration 0003 : form_responses publiée, RLS appliquée par
+     * Supabase Realtime) ; repli sur l'interrogation périodique tant que le
+     * canal n'est pas actif (migration absente, réseau, Realtime désactivé).
+     */
     subscribe(cb) {
       let last = null;
       let stopped = false;
+      let live = false;
+      const offLive = typeof api.subscribeResponses === 'function'
+        ? api.subscribeResponses(serverFormId, () => { if (!stopped) cb({ live: true }); }, (status) => {
+          const was = live;
+          live = status === 'SUBSCRIBED';
+          if (was && !live) last = null;      // canal perdu : reprise du sondage
+        })
+        : () => {};
       const tick = async () => {
-        if (stopped || (typeof document !== 'undefined' && document.hidden)) return;
+        if (stopped || live || (typeof document !== 'undefined' && document.hidden)) return;
         try {
           const r = await list({ page: 1, pageSize: 1, sort: { field: 'submittedAt', dir: 'desc' } });
           const sig = `${r.total}:${r.rows[0]?.id || ''}:${r.rows[0]?.updatedAt || ''}`;
@@ -255,7 +269,7 @@ function serverRepo({ serverFormId }) {
       };
       tick();
       const t = setInterval(tick, POLL_MS);
-      return () => { stopped = true; clearInterval(t); };
+      return () => { stopped = true; clearInterval(t); offLive(); };
     },
   };
 }
@@ -387,6 +401,7 @@ function localRepo({ def, actor }) {
     },
     versions: async () => ({}),
     sendEmail: null,
+    funnel: null,
     subscribe(cb) {
       const offs = [];
       if (store) {

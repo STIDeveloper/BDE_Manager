@@ -1,7 +1,7 @@
 // ============================================================
 // Validation hors ligne de la migration Supabase (schéma + RLS + RPC)
 // ============================================================
-// Exécute supabase/migrations/0001_init.sql puis 0002_forms.sql dans PGlite (Postgres 17 en
+// Exécute supabase/migrations/0001_init.sql, 0002_forms.sql puis 0003_forms_admin.sql dans PGlite (Postgres 17 en
 // WebAssembly, sans Docker) avec un bouchon des schémas auth / storage, puis
 // rejoue des scénarios multi-utilisateurs en se connectant comme le ferait
 // Supabase (rôle « authenticated » ou « anon » + identifiant JWT).
@@ -31,6 +31,7 @@ const { PGlite } = await import(pathToFileURL(join(pgliteDir, 'node_modules', '@
 
 const migration = readFileSync(join(here, '..', 'migrations', '0001_init.sql'), 'utf8');
 const migrationForms = readFileSync(join(here, '..', 'migrations', '0002_forms.sql'), 'utf8');
+const migrationFormsAdmin = readFileSync(join(here, '..', 'migrations', '0003_forms_admin.sql'), 'utf8');
 const stub = readFileSync(join(here, 'supabase_stub.sql'), 'utf8');
 
 const db = new PGlite();
@@ -65,6 +66,9 @@ check('migration ré-exécutable (idempotente)', true);
 await db.exec(migrationForms);
 await db.exec(migrationForms);
 check('migration 0002 (formulaires) exécutée deux fois (idempotente)', true);
+await db.exec(migrationFormsAdmin);
+await db.exec(migrationFormsAdmin);
+check('migration 0003 (administration des formulaires) exécutée deux fois (idempotente)', true);
 const rls = await db.query(`select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity`);
 check('RLS activée sur toutes les tables publiques', rls.rows.length === 0, JSON.stringify(rls.rows));
@@ -187,7 +191,8 @@ check('non-membre : fichier invisible', (await as(U.bob, `select 1 from storage.
 check('bucket privé', (await db.query(`select public from storage.buckets where id = 'attachments'`)).rows[0].public === false);
 
 // Studio Formulaires (0002) : publication, envois (cœur de forms-submit),
-// RLS, vote anonyme, automatisations, paiement, messages.
+// RLS, vote anonyme, automatisations, paiement, messages ; puis 0003 :
+// temps réel, évaluations, mode aveugle, entonnoir des brouillons.
 await (await import('./forms-scenarios.mjs')).run({ db, as, fails, check, U, wsA, wsB });
 
 console.log(`\nRésultat : ${passed} contrôles réussis, ${failed} en échec.`);

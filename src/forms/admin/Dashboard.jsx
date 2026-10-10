@@ -1,6 +1,6 @@
 // Tableau de bord d'un formulaire : volumes, évolution, ouverture, quotas,
 // places, liste d'attente, complétion (si mesurable), dernières réponses, alertes.
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Bell, Info, ChevronRight } from 'lucide-react';
 import { perDay, quotaUsage, slotPlanning, statusesOf, STATUS_BADGE, fmtNum, dayKey } from './analytics.js';
 import { LineChart, HBarChart, StatTile, DataTable } from './charts.jsx';
@@ -70,11 +70,13 @@ export default function Dashboard({ ctx, loading, goTable }) {
 
         <section className="bg-surface border border-line rounded-2xl p-4 space-y-2" aria-labelledby="fa-compl">
           <h3 id="fa-compl" className="text-sm font-semibold text-ink">Complétion et abandons</h3>
-          <p className="text-xs text-dim flex gap-1.5"><Info size={14} className="shrink-0 mt-0.5" aria-hidden="true" />
-            {mode === 'server'
-              ? 'Non mesurable : les brouillons de reprise des répondants ne sont pas lisibles par l\'administration (protection des données), et les formulaires commencés sans brouillon ne laissent aucune trace. Seuls les envois sont comptés.'
-              : 'Non mesurable sur cet appareil : seules les réponses envoyées (ou mises en file par la borne) sont connues ; les saisies abandonnées ne sont pas enregistrées.'}
-          </p>
+          {mode === 'server' && ctx.repo?.funnel ? <Funnel repo={ctx.repo} refreshKey={rows.length} /> : (
+            <p className="text-xs text-dim flex gap-1.5"><Info size={14} className="shrink-0 mt-0.5" aria-hidden="true" />
+              {mode === 'server'
+                ? 'Non mesurable : les brouillons de reprise des répondants ne sont pas lisibles par l\'administration (protection des données), et les formulaires commencés sans brouillon ne laissent aucune trace. Seuls les envois sont comptés.'
+                : 'Non mesurable sur cet appareil : seules les réponses envoyées (ou mises en file par la borne) sont connues ; les saisies abandonnées ne sont pas enregistrées.'}
+            </p>
+          )}
           {questions.length > 0 && rows.length > 0 && (
             <p className="text-xs text-dim">Taux de réponse moyen par question (réponses envoyées) : <strong className="text-ink">{fmtNum(questions.reduce((a, q) => a + rows.filter(r => { const v = r.answers?.[q.key]; return v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && !v.length); }).length / rows.length, 0) / questions.length * 100, 0)} %</strong></p>
           )}
@@ -123,6 +125,50 @@ export default function Dashboard({ ctx, loading, goTable }) {
       </section>
 
       <AlertsPanel def={def} />
+    </div>
+  );
+}
+
+/**
+ * Complétion / abandons à partir des compteurs anonymisés du serveur
+ * (form_funnel, migration 0003) : nombres uniquement, aucune réponse.
+ */
+function Funnel({ repo, refreshKey }) {
+  const [state, setState] = useState({ data: null, error: null });
+  useEffect(() => {
+    let alive = true;
+    repo.funnel()
+      .then(data => { if (alive) setState({ data, error: null }); })
+      .catch(err => { if (alive) setState({ data: null, error: err?.message || String(err) }); });
+    return () => { alive = false; };
+  }, [repo, refreshKey]);
+  const f = state.data;
+  if (state.error) {
+    return (
+      <p className="text-xs text-dim flex gap-1.5"><Info size={14} className="shrink-0 mt-0.5" aria-hidden="true" />
+        Complétion non mesurable pour l'instant : {state.error}
+      </p>
+    );
+  }
+  if (!f) return <p className="text-xs text-dim">Chargement des compteurs…</p>;
+  if (!f.drafts_enabled && !f.started) {
+    return (
+      <p className="text-xs text-dim flex gap-1.5"><Info size={14} className="shrink-0 mt-0.5" aria-hidden="true" />
+        La reprise de brouillon est désactivée pour ce formulaire : les saisies abandonnées ne laissent aucune trace, seuls les {f.submissions} envoi(s) sont comptés. Active « Sauvegarder un brouillon » dans les réglages pour mesurer la complétion.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      <div className="grid gap-2 grid-cols-2">
+        <StatTile label="Brouillons démarrés" value={f.started} hint={f.since ? `Depuis le ${formatDateTimeFr(f.since)}` : undefined} />
+        <StatTile label="Complétion" value={f.completion_rate === null || f.completion_rate === undefined ? '—' : `${fmtNum(f.completion_rate, 1)} %`} hint={`${f.submitted_from_draft} brouillon(s) envoyé(s)`} />
+        <StatTile label="Abandons" value={f.abandoned} hint={f.abandon_rate === null || f.abandon_rate === undefined ? 'Sans activité depuis plus de 24 h' : `${fmtNum(f.abandon_rate, 1)} % · sans activité depuis plus de 24 h`} tone={f.abandon_rate >= 50 ? 'warn' : undefined} />
+        <StatTile label="En cours" value={f.in_progress} hint="Modifiés dans les dernières 24 h" />
+      </div>
+      <p className="text-[11px] text-muted flex gap-1.5"><Info size={13} className="shrink-0 mt-0.5" aria-hidden="true" />
+        Compteurs anonymes (aucune réponse ni identité) tenus par le serveur pour les brouillons de reprise ; {f.submissions} réponse(s) envoyée(s) au total, avec ou sans brouillon.
+      </p>
     </div>
   );
 }

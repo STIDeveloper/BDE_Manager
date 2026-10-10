@@ -1,11 +1,17 @@
 // Candidatures : grille d'évaluation configurable, évaluateurs multiples,
 // évaluation à l'aveugle, conflits d'intérêts, moyenne / écart, classement,
 // décision, envoi des retenus au moteur d'affectation des rôles.
-// Stockage : store forms (tranches synchronisées forms.evaluations et
-// forms.evaluationGrids) — aucune API d'évaluation côté serveur.
-import { useId, useMemo, useState } from 'react';
-import { EyeOff, Eye, Plus, Trash2, Save, Sparkles, Loader2, AlertTriangle, Settings2, X } from 'lucide-react';
+// Stockage :
+//  - mode connecté (réponses serveur) : tables form_evaluations /
+//    form_evaluation_grids (migration 0003) — chacun ne modifie que SES
+//    évaluations (RLS), agrégats calculés par le serveur, mode aveugle servi
+//    par list_responses_for_evaluation (aucune identité ne quitte le serveur) ;
+//    repli sur le store local si la migration 0003 n'est pas installée ;
+//  - mode local : store forms (tranches forms.evaluations et forms.evaluationGrids).
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { EyeOff, Eye, Plus, Trash2, Save, Sparkles, Loader2, AlertTriangle, Settings2, X, Server, RefreshCw } from 'lucide-react';
 import { useFormsStore } from '../../modules/forms/store.js';
+import { formsApi } from './integrations.js';
 import { usePermissionSource } from '../../core/permissions.js';
 import { summarizeAnswers } from '../engine/index.js';
 import { DEFAULT_CRITERIA, evaluationSummary, evaluationTotal, fmtNum, statusesOf, STATUS_BADGE, adminQuestions } from './analytics.js';
@@ -18,23 +24,64 @@ import { confirmDialog } from '../../components/ui/confirmStore.js';
 import Modal from '../../components/Modal.jsx';
 
 const EMPTY = {};
+const EMPTY_SUM = { n: 0, mean: null, sd: null, conflicts: 0 };
 const ACCEPT_RX = /accept|retenu|valid|admis/i;
+const serverEvalsAvailable = typeof formsApi?.listEvaluations === 'function';
+
+/** Évaluations serveur d'un formulaire publié (null → inactif). */
+function useServerEvaluations(serverFormId) {
+  const [state, setState] = useState({ loading: false, error: null, notInstalled: false, evaluations: [], summary: {}, grid: null, userId: null });
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!serverFormId) return undefined;
+    let alive = true;
+    Promise.resolve().then(() => { if (alive) setState(s => ({ ...s, loading: true })); });
+    formsApi.listEvaluations(serverFormId)
+      .then(r => { if (alive) setState({ loading: false, error: null, notInstalled: false, ...r }); })
+      .catch(err => { if (alive) setState(s => ({ ...s, loading: false, error: err?.message || String(err), notInstalled: err?.code === 'not_installed' })); });
+    return () => { alive = false; };
+  }, [serverFormId, tick]);
+  const reload = useCallback(() => setTick(t => t + 1), []);
+  return { ...state, reload };
+}
+
+/** Réponses SANS identité (mode aveugle, serveur) : Map id → réponses expurgées. */
+function useBlindAnswers(serverFormId, refreshKey) {
+  const [state, setState] = useState({ map: null, error: null });
+  useEffect(() => {
+    if (!serverFormId) return undefined;
+    let alive = true;
+    formsApi.listResponsesForEvaluation(serverFormId)
+      .then(list => { if (alive) setState({ map: new Map((list || []).map(r => [r.id, r.answers || {}])), error: null }); })
+      .catch(err => { if (alive) setState({ map: null, error: err?.message || String(err) }); });
+    return () => { alive = false; };
+  }, [serverFormId, refreshKey]);
+  return serverFormId ? state : { map: null, error: null };
+}
 
 export default function Applications({ ctx }) {
   const uid = useId();
   const { def, filtered, rows, canWrite, memberName, members, questions } = ctx;
   const perm = usePermissionSource();
-  const grid = useFormsStore(s => s.evaluationGrids[def.id]) || null;
+  const serverFormId = useFormsStore(s => s.publications[def.id]?.serverFormId) || null;
+  const wantServer = ctx.mode === 'server' && !!serverFormId && serverEvalsAvailable;
+  const remote = useServerEvaluations(wantServer ? serverFormId : null);
+  const onServer = wantServer && !remote.notInstalled;
+  const localGrid = useFormsStore(s => s.evaluationGrids[def.id]) || null;
   const allEvals = useFormsStore(s => s.evaluations) || EMPTY;
-  const saveGrid = useFormsStore(s => s.saveEvaluationGrid);
+  const saveLocalGrid = useFormsStore(s => s.saveEvaluationGrid);
+  const saveLocalEval = useFormsStore(s => s.saveEvaluation);
+  const deleteLocalEval = useFormsStore(s => s.deleteEvaluation);
+  const grid = onServer ? (remote.grid ? { criteria: remote.grid.criteria, blindDefault: remote.grid.blind } : null) : localGrid;
   const criteria = grid?.criteria?.length ? grid.criteria : DEFAULT_CRITERIA;
   const [blind, setBlind] = useState(() => readPref(`blind:${def.id}`, grid?.blindDefault ?? true));
   const [editGrid, setEditGrid] = useState(false);
   const [evaluating, setEvaluating] = useState(null);
   const remoteUser = perm?.mode === 'remote' ? perm.user : null;
   const [localEvaluator, setLocalEvaluator] = useState(() => readPref('evaluator', ''));
-  const evaluatorId = remoteUser?.id || localEvaluator;
+  const evaluatorId = onServer ? (remote.userId || remoteUser?.id || '') : (remoteUser?.id || localEvaluator);
   const evaluatorName = remoteUser ? (remoteUser.email || 'Compte connecté') : localEvaluator === '__device' ? 'Cet appareil' : memberName(localEvaluator);
+  const blindData = useBlindAnswers(onServer && blind ? serverFormId : null, rows);
 
   // Numéro anonyme stable : ordre d'arrivée
   const number = useMemo(() => {
@@ -43,11 +90,33 @@ export default function Applications({ ctx }) {
   }, [rows]);
   const evalsByResponse = useMemo(() => {
     const m = new Map();
-    Object.values(allEvals).forEach(e => { if (e?.formId === def.id) { if (!m.has(e.responseId)) m.set(e.responseId, []); m.get(e.responseId).push(e); } });
+    const add = e => { if (!m.has(e.responseId)) m.set(e.responseId, []); m.get(e.responseId).push(e); };
+    if (onServer) remote.evaluations.forEach(add);
+    else Object.values(allEvals).forEach(e => { if (e?.formId === def.id) add(e); });
     return m;
-  }, [allEvals, def.id]);
-  const ranking = useMemo(() => filtered.map(r => ({ row: r, sum: evaluationSummary(evalsByResponse.get(r.id) || [], criteria) }))
-    .sort((a, b) => (b.sum.mean ?? -1) - (a.sum.mean ?? -1) || String(a.row.submittedAt).localeCompare(String(b.row.submittedAt))), [filtered, evalsByResponse, criteria]);
+  }, [onServer, remote.evaluations, allEvals, def.id]);
+  const ranking = useMemo(() => filtered.map(r => ({
+    row: r,
+    // Serveur : agrégats calculés par form_evaluation_summary (y compris les évaluations non lisibles individuellement).
+    sum: onServer ? { ...EMPTY_SUM, ...(remote.summary[r.id] || {}) } : evaluationSummary(evalsByResponse.get(r.id) || [], criteria),
+  })).sort((a, b) => (b.sum.mean ?? -1) - (a.sum.mean ?? -1) || String(a.row.submittedAt).localeCompare(String(b.row.submittedAt))), [filtered, onServer, remote.summary, evalsByResponse, criteria]);
+
+  const saveEvaluation = async (ev) => {
+    if (onServer) {
+      await formsApi.saveEvaluation({ formId: serverFormId, responseId: ev.responseId, scores: ev.scores, comment: ev.comment, conflict: ev.conflict, conflictNote: ev.conflictNote });
+      remote.reload();
+    } else saveLocalEval({ ...ev, formId: def.id });
+  };
+  const deleteEvaluation = async (ev) => {
+    if (onServer) { await formsApi.deleteEvaluation(ev.id); remote.reload(); } else deleteLocalEval(ev.id);
+  };
+  const saveGrid = async (list, blindDefault) => {
+    try {
+      if (onServer) { await formsApi.saveEvaluationGrid(serverFormId, { criteria: list, blind: blindDefault }); remote.reload(); } else saveLocalGrid(def.id, { criteria: list, blindDefault });
+      setEditGrid(false);
+      toast.success('Grille d\'évaluation enregistrée', onServer ? 'Partagée avec les autres évaluateurs.' : undefined);
+    } catch (err) { toast.error('Grille non enregistrée', err?.message || String(err)); }
+  };
   const statuses = statusesOf(def);
   const nameOf = r => (blind ? `Candidat n°${number.get(r.id)}` : respondentLabel(r, questions, memberName) || `Candidat n°${number.get(r.id)}`);
 
@@ -75,7 +144,24 @@ export default function Applications({ ctx }) {
           )}
         </div>
       </div>
-      {blind && <p className="text-[11px] text-dim">Mode aveugle : nom, e-mail, téléphone, adresse, signature et réponses sensibles sont masqués ; les candidats sont numérotés par ordre d'arrivée.</p>}
+      {wantServer && (
+        <div className="text-[11px] flex flex-wrap items-center gap-2" aria-live="polite">
+          {onServer ? (
+            <>
+              <span className="badge badge-brand inline-flex items-center gap-1"><Server size={11} aria-hidden="true" /> Évaluations partagées (serveur)</span>
+              <span className="text-dim">Chacun ne modifie que ses propres évaluations ; moyennes calculées par le serveur.</span>
+              <button type="button" className="btn-ghost !py-0.5 !text-xs" onClick={remote.reload} disabled={remote.loading} aria-label="Actualiser les évaluations">
+                {remote.loading ? <Loader2 size={12} className="animate-spin" aria-hidden="true" /> : <RefreshCw size={12} aria-hidden="true" />} Actualiser
+              </button>
+              {remote.error && <span className="text-red-600 dark:text-red-400" role="alert">{remote.error}</span>}
+            </>
+          ) : (
+            <span className="text-amber-700 dark:text-amber-300 flex gap-1"><AlertTriangle size={12} className="shrink-0 mt-0.5" aria-hidden="true" /> {remote.error} Évaluations enregistrées en attendant dans les données de l'application.</span>
+          )}
+        </div>
+      )}
+      {blind && <p className="text-[11px] text-dim">Mode aveugle : nom, e-mail, téléphone, adresse, signature et réponses sensibles sont masqués ; les candidats sont numérotés par ordre d'arrivée.{onServer ? ' Les réponses affichées sont expurgées par le serveur (aucune donnée d\'identité transmise).' : ''}</p>}
+      {blind && onServer && blindData.error && <p className="text-xs text-red-600 dark:text-red-400" role="alert">Réponses anonymisées indisponibles : {blindData.error}</p>}
 
       <section className="bg-surface border border-line rounded-2xl overflow-x-auto" aria-labelledby={`${uid}-rk`}>
         <h3 id={`${uid}-rk`} className="text-sm font-semibold text-ink p-3 pb-0">Classement ({ranking.length} candidature{ranking.length > 1 ? 's' : ''})</h3>
@@ -116,11 +202,14 @@ export default function Applications({ ctx }) {
 
       <SendToEngine ctx={ctx} statuses={statuses} />
 
-      {editGrid && <GridEditor criteria={criteria} blindDefault={grid?.blindDefault ?? true} onClose={() => setEditGrid(false)} onSave={(c, b) => { saveGrid(def.id, { criteria: c, blindDefault: b }); setEditGrid(false); toast.success('Grille d\'évaluation enregistrée'); }} />}
+      {editGrid && <GridEditor criteria={criteria} blindDefault={grid?.blindDefault ?? true} onClose={() => setEditGrid(false)} onSave={saveGrid} />}
       {evaluating && (() => {
         const row = rows.find(r => r.id === evaluating);
+        // Serveur + aveugle : uniquement les réponses expurgées par le serveur (jamais row.answers).
+        const blindServer = onServer && blind;
+        const answers = blindServer ? (blindData.map ? blindData.map.get(row?.id) || {} : null) : undefined;
         return row ? <EvaluationModal ctx={ctx} row={row} title={nameOf(row)} blind={blind} criteria={criteria} evaluatorId={evaluatorId} evaluatorName={evaluatorName}
-          evals={evalsByResponse.get(row.id) || []} onClose={() => setEvaluating(null)} /> : null;
+          evals={evalsByResponse.get(row.id) || []} answers={answers} onSave={saveEvaluation} onDelete={deleteEvaluation} onClose={() => setEvaluating(null)} /> : null;
       })()}
     </div>
   );
@@ -150,10 +239,13 @@ function GridEditor({ criteria, blindDefault, onSave, onClose }) {
   );
 }
 
-function EvaluationModal({ ctx, row, title, blind, criteria, evaluatorId, evaluatorName, evals, onClose }) {
+/**
+ * answers : undefined → réponses complètes de la ligne ; null → chargement
+ * (réponses expurgées par le serveur) ; objet → réponses expurgées.
+ */
+function EvaluationModal({ ctx, row, title, blind, criteria, evaluatorId, evaluatorName, evals, answers, onSave, onDelete, onClose }) {
   const uid = useId();
-  const save = useFormsStore(s => s.saveEvaluation);
-  const del = useFormsStore(s => s.deleteEvaluation);
+  const [busy, setBusy] = useState(false);
   const mine = evals.find(e => e.evaluatorId === evaluatorId) || null;
   const [scores, setScores] = useState(() => ({ ...(mine?.scores || {}) }));
   const [comment, setComment] = useState(mine?.comment || '');
@@ -161,26 +253,39 @@ function EvaluationModal({ ctx, row, title, blind, criteria, evaluatorId, evalua
   const [conflictNote, setConflictNote] = useState(mine?.conflictNote || '');
   const definition = ctx.definitionFor(row);
   const hidden = useMemo(() => new Set(adminQuestions(definition).filter(q => q.identity || q.sensitive).map(q => q.key)), [definition]);
+  const source = answers === undefined ? row.answers : answers;
   const lines = useMemo(() => {
+    if (!source) return [];
     let l;
-    try { l = summarizeAnswers(definition, row.answers || {}, { labelFor: ctx.labelFor }); } catch { l = []; }
+    try { l = summarizeAnswers(definition, source || {}, { labelFor: ctx.labelFor }); } catch { l = []; }
     return blind ? l.filter(x => !hidden.has(x.key.split('.')[0]) && !x.sensitive) : l.map(x => (x.sensitive && !ctx.revealed ? { ...x, value: '•••••' } : x));
-  }, [definition, row.answers, ctx.labelFor, blind, hidden, ctx.revealed]);
+  }, [definition, source, ctx.labelFor, blind, hidden, ctx.revealed]);
   const total = evaluationTotal({ scores }, criteria);
   const others = evals.filter(e => e.evaluatorId !== evaluatorId);
-  const submit = () => {
+  const submit = async () => {
     if (!evaluatorId) { toast.warn('Évaluateur inconnu', 'Choisis d\'abord qui évalue (« Je suis… »).'); return; }
-    save({ formId: ctx.def.id, responseId: row.id, evaluatorId, evaluatorName, scores: conflict ? {} : scores, comment: comment.trim(), conflict, conflictNote: conflict ? conflictNote.trim() : '' });
-    toast.success(conflict ? 'Conflit d\'intérêts déclaré' : 'Évaluation enregistrée', conflict ? 'Ton évaluation est exclue de la moyenne.' : `Note : ${fmtNum(total)} / 20`);
-    onClose();
+    setBusy(true);
+    try {
+      await onSave({ responseId: row.id, evaluatorId, evaluatorName, scores: conflict ? {} : scores, comment: comment.trim(), conflict, conflictNote: conflict ? conflictNote.trim() : '' });
+      toast.success(conflict ? 'Conflit d\'intérêts déclaré' : 'Évaluation enregistrée', conflict ? 'Ton évaluation est exclue de la moyenne.' : `Note : ${fmtNum(total)} / 20`);
+      onClose();
+    } catch (err) {
+      toast.error('Évaluation non enregistrée', err?.message || String(err));
+    } finally { setBusy(false); }
+  };
+  const remove = async () => {
+    if (!(await confirmDialog({ title: 'Supprimer ton évaluation ?', confirmLabel: 'Supprimer', tone: 'danger' }))) return;
+    setBusy(true);
+    try { await onDelete(mine); toast.success('Évaluation supprimée'); onClose(); } catch (err) { toast.error('Suppression impossible', err?.message || String(err)); } finally { setBusy(false); }
   };
   return (
     <Modal isOpen onClose={onClose} title={`Évaluer — ${title}`} maxWidth="max-w-3xl"
-      footer={<>{mine && <button type="button" className="btn-ghost !text-red-600 mr-auto" onClick={async () => { if (await confirmDialog({ title: 'Supprimer ton évaluation ?', confirmLabel: 'Supprimer', tone: 'danger' })) { del(mine.id); onClose(); } }}>Supprimer mon évaluation</button>}
-        <button type="button" className="btn-secondary" onClick={onClose}>Fermer</button><button type="button" className="btn-primary" disabled={!ctx.canWrite} onClick={submit}><Save size={14} aria-hidden="true" /> Enregistrer</button></>}>
+      footer={<>{mine && <button type="button" className="btn-ghost !text-red-600 mr-auto" disabled={busy} onClick={remove}>Supprimer mon évaluation</button>}
+        <button type="button" className="btn-secondary" onClick={onClose}>Fermer</button><button type="button" className="btn-primary" disabled={!ctx.canWrite || busy} onClick={submit}>{busy ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Save size={14} aria-hidden="true" />} Enregistrer</button></>}>
       <div className="grid gap-4 md:grid-cols-2">
         <section aria-label="Candidature" className="space-y-1 max-h-[55vh] overflow-y-auto pr-1">
           {blind && <p className="text-[11px] text-violet-700 dark:text-violet-300 flex items-center gap-1"><EyeOff size={12} aria-hidden="true" /> Identité et coordonnées masquées.</p>}
+          {!source && <p className="text-sm text-dim flex items-center gap-1.5"><Loader2 size={14} className="animate-spin" aria-hidden="true" /> Chargement de la candidature anonymisée…</p>}
           <dl className="divide-y divide-line border border-line rounded-xl">
             {lines.map(l => <div key={l.key} className="p-2"><dt className="text-[11px] text-muted">{l.label}</dt><dd className="text-sm text-ink whitespace-pre-wrap break-words">{l.value}</dd></div>)}
           </dl>

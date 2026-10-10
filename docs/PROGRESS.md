@@ -20,7 +20,7 @@
 |---|---|---|
 | Build | ✅ | `npm run build` OK. Précache SW 13 entrées / 874 Ko (avant : 35 / 6,4 Mo) |
 | ESLint | ✅ | `npx eslint .` → **0 erreur** (avant : 103) |
-| Tests | ✅ | `npm test` → **281/281** (avant : 37/40, commande cassée sous Node 24) |
+| Tests | ✅ | `npm test` → **281/281** (+ 249 contrôles de sécurité PGlite) (avant : 37/40, commande cassée sous Node 24) |
 | Migration des données existantes | ✅ | `src/core/tests/migration.test.js` (7) + parcours navigateur v10 → v11 |
 | CRUD rôles / pôles / niveaux | ✅ | `src/core/tests/catalogStore.test.js` (17) + parcours navigateur |
 | Catalogue dynamique (persisté) | ✅ | Persisté dans `bde-storage` v11 ; vérifié après rechargement |
@@ -165,8 +165,25 @@ Architecture : socle commun (`src/core/createModuleStore.js`, `moduleRegistry.js
 - Envoi d'emails via `mailto:` (le PDF est à joindre à la main).
 - Le navigateur intégré ne peut pas ouvrir le domaine de production (réglage de sites) : production vérifiée par requêtes HTTP + build identique en local.
 
+## Phase 5 — Studio Formulaires (terminé, mode connecté à activer)
+| Brique | Fonctionnel | Vérification |
+|---|---|---|
+| Moteur de règles (`src/forms/engine/`) | Formules en français, logique conditionnelle, calculs, scores, quotas, validation ; code pur partagé app / serveur | 250+ contrôles (scripts), 300 questions évaluées en 0,6 ms |
+| Éditeur (`src/modules/forms/`) | Glisser-déposer, 30 types, conditions visuelles et formules, thèmes, aperçu 3 appareils, historique, versions, 11 modèles | Navigateur |
+| Expérience répondant (`src/forms/runtime/`) | Page publique légère `#/f/<slug>` et lien court `/f/<slug>`, brouillons, hors ligne, Turnstile, PDF récapitulatif, modification après envoi, **mode borne** sur route autonome protégée par PIN | Navigateur (borne → réponse visible dans l'admin) |
+| Administration (`src/forms/admin/`) | Tableau de bord, tableau virtualisé, filtres, croisements, statuts, masse (limitée aux réponses visibles), candidatures (évaluation à l'aveugle), exports CSV/Excel/PDF | Navigateur (320 réponses) |
+| Automatisations (`src/automations/`) | SI/ALORS, 11 actions inter-modules, validation humaine, idempotence, journal, notifications | Navigateur (mode local) |
+| Fonctions différenciantes | Élections (bulletin séparé de l'identité, reçu vérifiable, PV auto), portail `#/espace`, QR de présence + scanner, partage/intégration | Navigateur (serveur simulé) |
+| Tâches (`src/modules/tasks/`) | Kanban de tâches, validation, liens, échéances dans l'agenda | Navigateur |
+| Serveur (`supabase/0002`, `0003`, fonctions Edge) | Versions, réponses, vote anonyme, automatisations, évaluations, entonnoir, temps réel, Turnstile, Brevo, HelloAsso | **249 contrôles PGlite**, `deno check` |
+
+**Corrigé pendant l'intégration** : mode borne affiché dans l'application (navigation accessible aux visiteurs en quittant le plein écran) → route autonome ; mode borne qui affichait « refusée par le serveur » en mode local ; actions en masse qui pouvaient toucher des réponses masquées par les filtres ; App retiré du précache par le découpage ; lien de modification envoyé par e-mail sans `#/` ; faille de la migration 0001 (`audit()`, `seed_default_grants()` exécutables par tout compte) corrigée dans 0002.
+
+**Limites** : le mode connecté (Supabase réel, Realtime, Storage, e-mails, paiements) n'a pas pu être testé de bout en bout sans tes clés et le déploiement des fonctions Edge ; scanner caméra vérifié sur image (pas de flux vidéo dans l'environnement de test) ; le mode aveugle des évaluations est une garantie d'interface (un compte « Formulaires › lecture » peut lire les réponses brutes).
+
 ## Décisions en attente (ton autorisation est requise)
-1. **Projet Supabase** à créer par toi (gratuit) pour activer la collaboration — voir `supabase/README.md`.
+1. Exécuter `supabase/migrations/0002_forms.sql` puis `0003_forms_admin.sql` (SQL Editor) ; vérifier *Database › Publications* (`form_responses`).
+2. Secrets Supabase (Turnstile, Brevo, HelloAsso, `APP_ORIGIN`) et déploiement des 3 fonctions Edge (voir `supabase/README.md`) ; `VITE_TURNSTILE_SITE_KEY` dans Vercel.
 
 ## Prochaines actions possibles
 - Après déploiement : vérifier l'installation PWA sur iPhone et Android, puis le cycle de mise à jour du service worker.

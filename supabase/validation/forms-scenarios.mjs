@@ -1,5 +1,5 @@
 // ============================================================
-// Validation hors ligne — Studio Formulaires (migration 0002)
+// Validation hors ligne — Studio Formulaires (migrations 0002 et 0003)
 // ============================================================
 // Appelé par validate.mjs après les scénarios de 0001 (même base PGlite).
 // Rejoue le VRAI cœur des fonctions Edge (supabase/functions/_shared/*.js)
@@ -87,17 +87,17 @@ export async function run({ db, as, fails, check, U, wsA, wsB }) {
   }
 
   // ── Utilisateurs supplémentaires ──────────────────────────────────────
-  U.ines = randomUUID();
-  await sql('insert into auth.users (id, email) values ($1, $2)', [U.ines, 'ines@exemple.fr']);
-  users[U.ines] = 'ines@exemple.fr';
-  const tIn = (await as(U.alice, `select public.invite_member($1, 'ines@exemple.fr', 'membre') as t`, [wsA])).rows[0].t;
-  await as(U.ines, 'select public.accept_invitation($1)', [tIn]);
+  U.ilona = randomUUID();
+  await sql('insert into auth.users (id, email) values ($1, $2)', [U.ilona, 'ilona@exemple.fr']);
+  users[U.ilona] = 'ilona@exemple.fr';
+  const tIn = (await as(U.alice, `select public.invite_member($1, 'ilona@exemple.fr', 'membre') as t`, [wsA])).rows[0].t;
+  await as(U.ilona, 'select public.accept_invitation($1)', [tIn]);
 
   console.log('10. Formulaires : schéma et droits');
   const rlsOff = await sql(`select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
     where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity`);
   check('RLS activée sur toutes les tables (0001 + 0002)', rlsOff.rows.length === 0, JSON.stringify(rlsOff.rows));
-  const gI = (await as(U.ines, 'select public.my_grants($1) as g', [wsA])).rows[0].g;
+  const gI = (await as(U.ilona, 'select public.my_grants($1) as g', [wsA])).rows[0].g;
   check('capacités forms/tasks ajoutées aux espaces existants (membre : lecture)', gI.grants.forms === 'read' && gI.grants.tasks === 'read');
   const gF = (await as(U.frank, 'select public.my_grants($1) as g', [wsA])).rows[0].g;
   check('bureau : forms en écriture', gF.grants.forms === 'write');
@@ -140,7 +140,7 @@ export async function run({ db, as, fails, check, U, wsA, wsB }) {
   const formId = pub1.form_id;
   check('version publiée immuable', !!(await fails(U.alice, `update public.form_versions set definition = '{}' where form_id = $1`, [formId]))
     && (await sql('select count(*)::int as n from public.form_versions where form_id = $1', [formId])).rows[0].n === 2);
-  check('membre (lecture) : publication refusée', !!(await fails(U.ines, 'select public.publish_form($1, $2, $3, $4)', [wsA, 'x', 'autre', defInscription])));
+  check('membre (lecture) : publication refusée', !!(await fails(U.ilona, 'select public.publish_form($1, $2, $3, $4)', [wsA, 'x', 'autre', defInscription])));
   check('lien court déjà pris par un autre espace : refusé', !!(await fails(U.bob, 'select public.publish_form($1, $2, $3, $4)', [wsB, 'f-bob', 'wei-2027', defInscription])));
   check('définition sans page : refusée', !!(await fails(U.alice, 'select public.publish_form($1, $2, $3, $4)', [wsA, 'vide', 'vide', { ...defInscription, pages: [] }])));
   check('lien court invalide : refusé', !!(await fails(U.alice, 'select public.publish_form($1, $2, $3, $4)', [wsA, 'x2', 'Pas Valide!', defInscription])));
@@ -161,7 +161,7 @@ export async function run({ db, as, fails, check, U, wsA, wsB }) {
   await as(U.alice, 'select public.publish_form($1, $2, $3, $4)', [wsA, 'quiz', 'quiz-culture', defQuiz]);
   check('formulaire « membres » : anonyme → connexion requise', (await as(null, `select public.get_public_form('quiz-culture') as r`)).rows[0].r.reason === 'auth_required');
   check('formulaire « membres » : non-membre → refusé', (await as(U.bob, `select public.get_public_form('quiz-culture') as r`)).rows[0].r.reason === 'forbidden');
-  const quizIn = (await as(U.ines, `select public.get_public_form('quiz-culture') as r`)).rows[0].r;
+  const quizIn = (await as(U.ilona, `select public.get_public_form('quiz-culture') as r`)).rows[0].r;
   check('formulaire « membres » : membre → disponible, bonne réponse du quiz masquée',
     quizIn.available && !JSON.stringify(quizIn.definition).includes('"correct"') && JSON.stringify(quizIn.definition).includes('"points"'));
 
@@ -172,7 +172,7 @@ export async function run({ db, as, fails, check, U, wsA, wsB }) {
     `insert into public.automations (workspace_id, form_id, trigger) values ($1, $2, '{"event":"response.created"}')`, [wsB, formId])));
   check('automatisation : déclencheur invalide refusé', !!(await fails(U.alice,
     `insert into public.automations (workspace_id, trigger) values ($1, '{"event":"n_importe_quoi"}')`, [wsA])));
-  check('automatisation : membre (lecture) ne peut pas en créer', !!(await fails(U.ines,
+  check('automatisation : membre (lecture) ne peut pas en créer', !!(await fails(U.ilona,
     `insert into public.automations (workspace_id, trigger) values ($1, '{"event":"response.created"}')`, [wsA])));
 
   console.log('12. Envoi de réponses (cœur de forms-submit + moteur)');
@@ -278,7 +278,7 @@ export async function run({ db, as, fails, check, U, wsA, wsB }) {
   check('brouillon : mauvais jeton → rien', (await as(null, `select public.load_form_draft('wei-2027', $1) as r`, ['y'.repeat(40)])).rows[0].r === null);
   await as(U.alice, 'select public.publish_form($1, $2, $3, $4)', [wsA, 'sans-brouillon', 'sans-brouillon', { ...defCap, settings: { ...defCap.settings, saveDraft: false } }]);
   check('brouillon : formulaire sans reprise → refusé', !!(await fails(null, `select public.save_form_draft('sans-brouillon', $1, '{}')`, [tok])));
-  await submit({ slug: 'wei-2027', draftToken: tok, answers: { nom: 'Lou', email: 'lou@exemple.fr', bus: 'b' } });
+  await submit({ slug: 'wei-2027', draftToken: tok, answers: { nom: 'Jade', email: 'jade@exemple.fr', bus: 'b' } });
   check('brouillon supprimé après l\'envoi définitif', (await as(null, `select public.load_form_draft('wei-2027', $1) as r`, [tok])).rows[0].r === null);
 
   console.log('13. Réponses : droits (RLS)');
@@ -286,8 +286,8 @@ export async function run({ db, as, fails, check, U, wsA, wsB }) {
   check('admin d\'un autre espace : modification sans effet', (await as(U.bob, `update public.form_responses set status = 'accepted' returning id`)).rows.length === 0);
   check('admin d\'un autre espace : historique illisible', (await as(U.bob, 'select 1 from public.form_response_events')).rows.length === 0);
   check('propriétaire : lit les réponses de son espace', (await as(U.alice, 'select 1 from public.form_responses where form_id = $1', [formId])).rows.length >= 2);
-  check('membre (lecture) : lit mais ne modifie pas', (await as(U.ines, 'select 1 from public.form_responses where form_id = $1', [formId])).rows.length >= 2
-    && (await as(U.ines, `update public.form_responses set status = 'accepted' where form_id = $1 returning id`, [formId])).rows.length === 0);
+  check('membre (lecture) : lit mais ne modifie pas', (await as(U.ilona, 'select 1 from public.form_responses where form_id = $1', [formId])).rows.length >= 2
+    && (await as(U.ilona, `update public.form_responses set status = 'accepted' where form_id = $1 returning id`, [formId])).rows.length === 0);
   check('répondant : aucune lecture directe de la table', (await as(U.eve, 'select 1 from public.form_responses')).rows.length === 0);
   const mine = (await as(U.eve, 'select public.get_my_responses() as r')).rows[0].r;
   check('répondant : get_my_responses → uniquement ses réponses, sans champs internes', mine.length === 1 && mine[0].id === e1.body.responseId && !('tags' in mine[0]));
@@ -297,7 +297,7 @@ export async function run({ db, as, fails, check, U, wsA, wsB }) {
   const hist = (await as(U.alice, 'select action, actor, payload from public.form_response_events where response_id = $1 order by id', [r1.id])).rows;
   check('historique : statut (de → vers), étiquettes, note, auteur', hist.some(h => h.action === 'status' && h.payload.to === 'accepted' && h.actor === U.frank)
     && hist.some(h => h.action === 'tags') && hist.some(h => h.action === 'note' && h.payload.text === 'Appelée le 3/10'));
-  check('note par un membre (lecture) refusée', !!(await fails(U.ines, 'select public.add_response_note($1, $2)', [r1.id, 'x'])));
+  check('note par un membre (lecture) refusée', !!(await fails(U.ilona, 'select public.add_response_note($1, $2)', [r1.id, 'x'])));
   check('administration : réponses elles-mêmes non modifiables', !!(await fails(U.alice, `update public.form_responses set answers = '{}' where id = $1`, [r1.id])));
   check('administration : « payé » réservé au serveur de paiement', !!(await fails(U.alice, `update public.form_responses set payment_status = 'paid' where id = $1`, [r1.id])));
   check('administration : suppression physique impossible', !!(await fails(U.alice, 'delete from public.form_responses where id = $1', [r1.id])));
@@ -333,9 +333,9 @@ export async function run({ db, as, fails, check, U, wsA, wsB }) {
   check('vote : un seul vote par électeur', !!(await fails(U.alice, `select public.cast_vote($1, '{"president":"frank"}')`, [vid])));
   check('vote : non-inscrit refusé', !!(await fails(U.bob, `select public.cast_vote($1, '{"president":"frank"}')`, [vid])));
   check('vote : anonyme (non connecté) refusé', !!(await fails(null, `select public.cast_vote($1, '{"president":"frank"}')`, [vid])));
-  check('vote : choix invalide refusé', !!(await fails(U.ines, `select public.cast_vote($1, '{"president":"mallory"}')`, [vid])));
-  check('vote : question obligatoire manquante refusée', !!(await fails(U.ines, `select public.cast_vote($1, '{"budget":true}')`, [vid])));
-  check('vote : un refus ne consomme pas le droit', !(await fails(U.ines, `select public.cast_vote($1, '{"president":"frank","budget":false}')`, [vid])));
+  check('vote : choix invalide refusé', !!(await fails(U.ilona, `select public.cast_vote($1, '{"president":"mallory"}')`, [vid])));
+  check('vote : question obligatoire manquante refusée', !!(await fails(U.ilona, `select public.cast_vote($1, '{"budget":true}')`, [vid])));
+  check('vote : un refus ne consomme pas le droit', !(await fails(U.ilona, `select public.cast_vote($1, '{"president":"frank","budget":false}')`, [vid])));
   await as(U.frank, `select public.cast_vote($1, '{"president":"alice"}')`, [vid]);
   check('vote : passer par forms-submit est refusé', (await submit({ slug: 'election-bureau', answers: { president: 'alice' } }, { user: U.dave })).status === 400);
   check('reçu vérifiable (anonyme) : compté', (await as(null, 'select public.verify_ballot($1, $2) as r', [vid, rA.receipt])).rows[0].r.counted === true);
@@ -358,7 +358,7 @@ export async function run({ db, as, fails, check, U, wsA, wsB }) {
   })));
   check('reçu stocké haché uniquement', (await sql('select count(*)::int as n from public.vote_ballots where receipt_hash = $1', [rA.receipt])).rows[0].n === 0);
   await as(U.alice, `select public.set_form_status($1, 'closed')`, [vid]);
-  const res = (await as(U.ines, 'select public.vote_results($1) as r', [vid])).rows[0].r;
+  const res = (await as(U.ilona, 'select public.vote_results($1) as r', [vid])).rows[0].r;
   const pres = res.questions.find(x => x.key === 'president');
   check('après clôture : résultats (3 bulletins / 4 inscrits, quorum 50 % atteint)', res.visible && res.ballots === 3 && res.electorate === 4 && res.quorum_reached === true, JSON.stringify(res));
   check('majorité absolue : Alice élue (2/3 des exprimés)', pres.winner === 'alice' && pres.options.find(o => o.value === 'alice').count === 2 && pres.decided === true);
@@ -380,7 +380,7 @@ export async function run({ db, as, fails, check, U, wsA, wsB }) {
   check('réservation des exécutions (propriétaire)', queued.length >= 1 && queued.every(r => r.automation?.actions));
   check('réservation : rien de plus tant que la réservation court', (await as(U.alice, 'select public.claim_automation_runs($1, 50) as r', [wsA])).rows[0].r.length === 0);
   check('réservation : autre espace refusé', !!(await fails(U.bob, 'select public.claim_automation_runs($1, 5)', [wsA])));
-  check('réservation : membre (lecture) refusé', !!(await fails(U.ines, 'select public.claim_automation_runs($1, 5)', [wsA])));
+  check('réservation : membre (lecture) refusé', !!(await fails(U.ilona, 'select public.claim_automation_runs($1, 5)', [wsA])));
   await as(U.alice, `select public.complete_automation_run($1, 'done', '{"emails":1}')`, [queued[0].id]);
   check('exécution terminée (done) ; deuxième clôture refusée', !!(await fails(U.alice, `select public.complete_automation_run($1, 'done')`, [queued[0].id])));
   check('statut de fin invalide refusé', !!(await fails(U.alice, `select public.complete_automation_run($1, 'peut-etre')`, [queued[1]?.id || queued[0].id])));
@@ -432,6 +432,128 @@ export async function run({ db, as, fails, check, U, wsA, wsB }) {
   check('message aux répondants : destinataires résolus côté serveur (adresse arbitraire ignorée)', n1.status === 200 && n1.body.sent === 2 && n1.body.ignored === 1
     && !JSON.stringify(emails).includes('pirate') && emails[0].html.includes('&lt;b&gt;'), JSON.stringify(n1.body));
   check('message : admin d\'un autre espace refusé', (await notify(U.bob, { workspaceId: wsA, responseIds: [r1.id], subject: 's', message: 'm' })).status === 403);
-  check('message : membre (lecture) refusé', (await notify(U.ines, { workspaceId: wsA, responseIds: [r1.id], subject: 's', message: 'm' })).status === 403);
+  check('message : membre (lecture) refusé', (await notify(U.ilona, { workspaceId: wsA, responseIds: [r1.id], subject: 's', message: 'm' })).status === 403);
   check('message : réponse d\'un autre espace → aucun destinataire', (await notify(U.bob, { workspaceId: wsB, responseIds: [r1.id], subject: 's', message: 'm' })).status === 422);
+
+  // ──────────────────────────────────────────────────────────────────
+  // Migration 0003 : temps réel, évaluations, mode aveugle, entonnoir
+  // ──────────────────────────────────────────────────────────────────
+  console.log('17. Administration (0003) : temps réel et capacités');
+  const pubT = (await sql(`select tablename from pg_publication_tables where pubname = 'supabase_realtime'`).catch(() => ({ rows: [] }))).rows.map(r => r.tablename);
+  check('publication temps réel : form_responses présente (records conservée)', pubT.includes('form_responses') && pubT.includes('records'), pubT.join(','));
+  check('temps réel : vote, brouillons et évaluations NON publiés', !pubT.some(t => /^vote_|form_drafts|form_evaluations|form_draft_counters/.test(t)));
+  check('temps réel filtré par la RLS de lecture : autre espace / anonyme ne lisent aucune réponse',
+    (await as(U.bob, 'select 1 from public.form_responses')).rows.length === 0 && !!(await fails(null, 'select 1 from public.form_responses')));
+  const capT = (await sql(`select id from public.capabilities where id in ('forms', 'tasks') order by id`)).rows.map(r => r.id).join();
+  const gT = (await as(U.frank, 'select public.my_grants($1) as g', [wsA])).rows[0].g.grants;
+  check('capacités forms et tasks présentes (bureau : écriture)', capT === 'forms,tasks' && gT.forms === 'write' && gT.tasks === 'write');
+  for (const t of ['form_evaluations', 'form_evaluation_grids', 'form_draft_counters']) {
+    check(`anonyme : table ${t} inaccessible`, !!(await fails(null, `select 1 from public.${t}`)));
+  }
+  check('compteurs de brouillons : aucune lecture directe (même propriétaire)', !!(await fails(U.alice, 'select * from public.form_draft_counters')));
+  check('fonction interne forms_strip_identity non exposée', !!(await fails(U.alice, `select public.forms_strip_identity('{}'::jsonb, '{}')`)));
+
+  console.log('18. Évaluations des candidatures (RLS)');
+  const defApp = { id: 'cand-bureau', slug: 'candidature-bureau', title: 'Candidature au bureau', kind: 'application', status: 'published',
+    pages: [{ id: 'p1', items: [
+      q('prenom_nom', 'name', { label: 'Nom', required: true }),
+      q('email', 'email', { label: 'E-mail' }),
+      q('telephone', 'phone', { label: 'Téléphone' }),
+      q('parrain', 'member_picker', { label: 'Parrain' }),
+      q('sante', 'long_text', { label: 'Santé', sensitive: true }),
+      q('pourquoi', 'long_text', { label: 'Pourquoi ?' }),
+      { id: 's_refs', kind: 'section', key: 'refs', repeat: true, items: [q('ref_nom', 'short_text'), q('ref_email', 'email')] },
+    ] }],
+    settings: { access: 'link', identity: 'optional', saveDraft: true, statuses: [{ id: 'received', label: 'Reçue' }] } };
+  const appForm = (await as(U.alice, 'select public.publish_form($1, $2, $3, $4) as r', [wsA, defApp.id, defApp.slug, defApp])).rows[0].r.form_id;
+  const appResp = async (answers, email) => (await sql(`insert into public.form_responses (form_id, version, workspace_id, answers, respondent_email, respondent_member, tags, assignee)
+    values ($1, 1, $2, $3, $4, 'm-candidat', '{secret-tag}', 'm-jury') returning id`, [appForm, wsA, JSON.stringify(answers), email])).rows[0].id;
+  const R1 = await appResp({ prenom_nom: 'Zoé Candidate', email: 'zoe@exemple.fr', telephone: '0611223344', parrain: 'm1', sante: 'asthme',
+    pourquoi: 'Envie d\'animer la vie étudiante', refs: [{ ref_nom: 'Prof. X', ref_email: 'profx@exemple.fr' }] }, 'zoe@exemple.fr');
+  const R2 = await appResp({ prenom_nom: 'Yann Postulant', pourquoi: 'Organiser le gala' }, 'yann@exemple.fr');
+  const evIns = (uid, resp, scores, extra = {}) => as(uid, `insert into public.form_evaluations (response_id, form_id, evaluator, scores, comment, conflict)
+    values ($1, $2, $3, $4, $5, $6) returning evaluator`, [resp, appForm, extra.evaluator || uid, JSON.stringify(scores), extra.comment || null, !!extra.conflict]);
+  const evF = (await evIns(U.frank, R1, { motivation: 4, disponibilite: 4, experience: 4, equipe: 4 }, { evaluator: U.alice, comment: 'Solide' })).rows[0];
+  check('évaluateur imposé par le serveur : se faire passer pour un autre est impossible', evF.evaluator === U.frank);
+  await evIns(U.alice, R1, { motivation: 5, disponibilite: 5, experience: 5, equipe: 5 });
+  check('une seule évaluation par évaluateur et par réponse', !!(await fails(U.alice, `insert into public.form_evaluations (response_id, form_id, scores) values ($1, $2, '{}')`, [R1, appForm])));
+  const upOther = await as(U.frank, `update public.form_evaluations set scores = '{"motivation":0}' where response_id = $1 and evaluator = $2 returning id`, [R1, U.alice]);
+  const delOther = await as(U.frank, `delete from public.form_evaluations where response_id = $1 and evaluator = $2 returning id`, [R1, U.alice]);
+  const aliceEv = (await sql(`select scores from public.form_evaluations where response_id = $1 and evaluator = $2`, [R1, U.alice])).rows[0];
+  check('évaluateur A ne peut ni modifier ni supprimer l\'évaluation de B', upOther.rows.length === 0 && delOther.rows.length === 0 && aliceEv?.scores?.motivation === 5);
+  check('évaluateur : réattribuer son évaluation à un autre refusé', !!(await fails(U.frank, `update public.form_evaluations set evaluator = $2 where response_id = $1 and evaluator = $3`, [R1, U.alice, U.frank])));
+  check('évaluateur : modifie sa propre évaluation', (await as(U.frank, `update public.form_evaluations set comment = 'Très solide' where response_id = $1 returning id`, [R1])).rows.length === 1);
+  const upsertEv = (uid, resp, scores) => as(uid, `insert into public.form_evaluations (response_id, form_id, evaluator, scores, comment, conflict, conflict_note)
+    values ($1, $2, $3, $4, null, false, null) on conflict (response_id, evaluator) do update set response_id = excluded.response_id, form_id = excluded.form_id,
+    evaluator = excluded.evaluator, scores = excluded.scores, comment = excluded.comment, conflict = excluded.conflict, conflict_note = excluded.conflict_note returning evaluator`,
+    [resp, appForm, uid, JSON.stringify(scores)]);
+  await upsertEv(U.alice, R1, { motivation: 5, disponibilite: 5, experience: 5, equipe: 5 });
+  check('enregistrement par « upsert » (comme le client) : met à jour sa propre ligne, sans doublon', (await sql('select count(*)::int as n from public.form_evaluations where response_id = $1', [R1])).rows[0].n === 2);
+  check('membre (lecture) : ne peut pas évaluer', !!(await fails(U.ilona, `insert into public.form_evaluations (response_id, form_id, scores) values ($1, $2, '{"motivation":3}')`, [R1, appForm])));
+  check('admin d\'un autre espace : ne peut pas évaluer', !!(await fails(U.bob, `insert into public.form_evaluations (response_id, form_id, scores) values ($1, $2, '{"motivation":3}')`, [R1, appForm])));
+  check('note hors barème refusée', !!(await fails(U.frank, `insert into public.form_evaluations (response_id, form_id, scores) values ($1, $2, '{"motivation":9}')`, [R2, appForm])));
+  check('critère inconnu refusé', !!(await fails(U.frank, `insert into public.form_evaluations (response_id, form_id, scores) values ($1, $2, '{"charisme":3}')`, [R2, appForm])));
+  check('note non numérique refusée', !!(await fails(U.frank, `insert into public.form_evaluations (response_id, form_id, scores) values ($1, $2, '{"motivation":"abc"}')`, [R2, appForm])));
+  check('lecture hors espace interdite (0 ligne)', (await as(U.bob, 'select 1 from public.form_evaluations')).rows.length === 0);
+  check('membre (lecture) : évaluations individuelles illisibles', (await as(U.ilona, 'select 1 from public.form_evaluations')).rows.length === 0);
+  check('comité (bureau) : lit toutes les évaluations de l\'espace', (await as(U.frank, 'select 1 from public.form_evaluations where form_id = $1', [appForm])).rows.length === 2);
+
+  const summ = (await as(U.ilona, 'select public.form_evaluation_summary($1) as r', [appForm])).rows[0].r;
+  const s1 = summ[R1];
+  check('agrégats (lecture) : 2 évaluations, moyenne 18/20, écart-type 2,83', s1?.n === 2 && Math.abs(s1.mean - 18) < 1e-6 && Math.abs(s1.sd - Math.SQRT2 * 2) < 1e-3, JSON.stringify(s1));
+  check('agrégats : aucune donnée personnelle ni commentaire', !/Zoé|zoe@|Solide|Très/.test(JSON.stringify(summ)));
+  check('agrégats : autre espace refusé', !!(await fails(U.bob, 'select public.form_evaluation_summary($1)', [appForm])));
+  check('agrégats : anonyme refusé', !!(await fails(null, 'select public.form_evaluation_summary($1)', [appForm])));
+  await as(U.frank, `update public.form_evaluations set conflict = true where response_id = $1`, [R1]);
+  const s1c = (await as(U.ilona, 'select public.form_evaluation_summary($1) as r', [appForm])).rows[0].r[R1];
+  const frankEv = (await sql(`select scores from public.form_evaluations where response_id = $1 and evaluator = $2`, [R1, U.frank])).rows[0];
+  check('conflit d\'intérêts : notes effacées, exclu de la moyenne (n = 1, 1 conflit)', s1c.n === 1 && s1c.conflicts === 1 && s1c.mean === 20 && Object.keys(frankEv.scores).length === 0, JSON.stringify(s1c));
+
+  console.log('19. Grille d\'évaluation');
+  const grid = [{ id: 'motivation', label: 'Motivation', max: 10, weight: 2 }, { id: 'projet', label: 'Projet', max: 10 }];
+  check('grille : membre (lecture) ne peut pas l\'enregistrer', !!(await fails(U.ilona, `insert into public.form_evaluation_grids (form_id, criteria) values ($1, $2)`, [appForm, JSON.stringify(grid)])));
+  check('grille : critère invalide refusé', !!(await fails(U.frank, `insert into public.form_evaluation_grids (form_id, criteria) values ($1, $2)`, [appForm, JSON.stringify([{ id: 'x', label: '', max: 0 }])])));
+  check('grille : barème non numérique refusé', !!(await fails(U.frank, `insert into public.form_evaluation_grids (form_id, criteria) values ($1, $2)`, [appForm, JSON.stringify([{ id: 'x', label: 'X', max: 'dix' }])])));
+  check('grille : écriture de l\'espace par le client refusée (privilège de colonne)', !!(await fails(U.frank, `insert into public.form_evaluation_grids (form_id, workspace_id, criteria) values ($1, $2, $3)`, [appForm, wsB, JSON.stringify(grid)])));
+  check('grille : enregistrée par le bureau (espace déduit du formulaire)', !(await fails(U.frank, `insert into public.form_evaluation_grids (form_id, criteria, blind) values ($1, $2, true)`, [appForm, JSON.stringify(grid)]))
+    && (await sql('select workspace_id from public.form_evaluation_grids where form_id = $1', [appForm])).rows[0].workspace_id === wsA);
+  check('grille : mise à jour par « upsert » (comme le client)', !(await fails(U.frank, `insert into public.form_evaluation_grids (form_id, criteria, blind) values ($1, $2, false)
+    on conflict (form_id) do update set form_id = excluded.form_id, criteria = excluded.criteria, blind = excluded.blind`, [appForm, JSON.stringify(grid)]))
+    && (await sql('select blind from public.form_evaluation_grids where form_id = $1', [appForm])).rows[0].blind === false);
+  check('grille : autre espace ne la lit pas', (await as(U.bob, 'select 1 from public.form_evaluation_grids')).rows.length === 0);
+  check('grille : barème appliqué aux nouvelles notes (motivation /10 accepté, critère retiré refusé)',
+    !(await fails(U.frank, `insert into public.form_evaluations (response_id, form_id, scores) values ($1, $2, '{"motivation":8,"projet":5}')`, [R2, appForm]))
+    && !!(await fails(U.alice, `insert into public.form_evaluations (response_id, form_id, scores) values ($1, $2, '{"equipe":3}')`, [R2, appForm])));
+  const s2 = (await as(U.alice, 'select public.form_evaluation_summary($1) as r', [appForm])).rows[0].r[R2];
+  check('agrégats selon la grille pondérée : (8×2 + 5) / 30 × 20 = 14', s2?.n === 1 && Math.abs(s2.mean - 14) < 1e-6, JSON.stringify(s2));
+
+  console.log('20. Évaluation à l\'aveugle (RPC)');
+  const blindRows = (await as(U.ilona, 'select public.list_responses_for_evaluation($1) as r', [appForm])).rows[0].r;
+  const b1 = blindRows.find(r => r.id === R1);
+  const blindJson = JSON.stringify(blindRows);
+  check('aveugle : réponses renvoyées (contenu évaluable conservé)', blindRows.length === 2 && b1?.answers?.pourquoi?.startsWith('Envie') && b1.answers.refs?.[0]?.ref_nom === 'Prof. X');
+  check('aveugle : questions nom / e-mail / téléphone / membre / sensibles retirées', ['prenom_nom', 'email', 'telephone', 'parrain', 'sante'].every(k => !(k in b1.answers)));
+  check('aveugle : identité retirée aussi dans les sections répétables', !('ref_email' in b1.answers.refs[0]));
+  check('aveugle : aucune colonne d\'identité ni champ interne', Object.keys(b1).sort().join() === 'answers,created_at,id,score,status,version,waitlisted');
+  check('aveugle : aucune donnée personnelle dans la charge utile', !/Zoé|Yann|zoe@|yann@|0611|asthme|profx|m-candidat|secret-tag|m-jury/.test(blindJson));
+  check('aveugle : autre espace refusé', !!(await fails(U.bob, 'select public.list_responses_for_evaluation($1)', [appForm])));
+  check('aveugle : anonyme refusé', !!(await fails(null, 'select public.list_responses_for_evaluation($1)', [appForm])));
+
+  console.log('21. Entonnoir des brouillons (compteurs anonymisés)');
+  const weiId = (await sql(`select id from public.forms where slug = 'wei-2027'`)).rows[0].id;
+  const f0 = (await as(U.ilona, 'select public.form_funnel($1) as r', [weiId])).rows[0].r;
+  check('entonnoir : brouillon repris puis envoyé compté (démarré 1, envoyé 1)', f0.started === 1 && f0.submitted_from_draft === 1 && f0.drafts_enabled === true && f0.submissions >= 2, JSON.stringify(f0));
+  const tA = 'abandon_' + 'a'.repeat(32), tB = 'expire_' + 'b'.repeat(32), tC = 'encours_' + 'c'.repeat(32);
+  for (const t of [tA, tB, tC]) await as(null, `select public.save_form_draft('wei-2027', $1, '{"nom":"Brouillon privé"}')`, [t]);
+  await sql(`update public.form_drafts set updated_at = now() - interval '2 days' where token_hash = public.forms_sha256('draft|' || $1)`, [tA]);
+  await sql(`update public.form_drafts set expires_at = now() - interval '1 minute' where token_hash = public.forms_sha256('draft|' || $1)`, [tB]);
+  await sql('delete from public.form_drafts where expires_at < now()');   // purge (comme save_form_draft)
+  const f1 = (await as(U.alice, 'select public.form_funnel($1) as r', [weiId])).rows[0].r;
+  check('entonnoir : démarrés 4, en cours 1, abandonnés 2 (> 24 h + expiré), taux calculés',
+    f1.started === 4 && f1.in_progress === 1 && f1.abandoned === 2 && f1.completion_rate === 25 && f1.abandon_rate === 50, JSON.stringify(f1));
+  check('entonnoir : uniquement des nombres (aucune donnée de réponse ni jeton)', !/Brouillon privé|Jade|Jeanne|abandon_aaa|expire_bbb|encours_ccc/.test(JSON.stringify(f1))
+    && Object.entries(f1).every(([k, v]) => v === null || typeof v === 'number' || typeof v === 'boolean' || k === 'since'), JSON.stringify(f1));
+  check('entonnoir : membre d\'un autre espace refusé', !!(await fails(U.bob, 'select public.form_funnel($1)', [weiId])));
+  check('entonnoir : anonyme refusé', !!(await fails(null, 'select public.form_funnel($1)', [weiId])));
+  check('brouillons toujours illisibles directement', !!(await fails(U.alice, 'select * from public.form_drafts')));
 }

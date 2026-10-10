@@ -395,3 +395,150 @@ export async function completeAutomationRun(runId, status, result = null) {
 export async function approveAutomationRun(runId, approve = true) {
   return rpc('approve_automation_run', { p_run: runId, p_approve: !!approve });
 }
+
+// ── Administration avancée (migration 0003) ─────────────────
+// Temps réel des réponses, évaluations des candidatures côté serveur
+// (grille, notes, mode aveugle, agrégats), entonnoir des brouillons.
+
+export const ADMIN_MIGRATION_MESSAGE = 'Fonction serveur absente : exécute supabase/migrations/0003_forms_admin.sql (voir supabase/README.md).';
+const isMissing = (err) => /Could not find the function|function .* does not exist|relation .* does not exist|Could not find the table|PGRST202|PGRST205|42P01|42883/i
+  .test(`${err?.message || ''} ${err?.code || ''}`);
+const adminError = (err) => (isMissing(err) ? new FormsApiError(ADMIN_MIGRATION_MESSAGE, { code: 'not_installed' }) : toError(err));
+async function adminRpc(name, params) {
+  const c = await client();
+  let res;
+  try { res = await c.rpc(name, params); } catch (err) { throw adminError(err); }
+  if (res.error) throw adminError(res.error);
+  return res.data;
+}
+const adminCheck = (res) => { if (res.error) throw adminError(res.error); return res.data; };
+const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const requireUuid = (id, what = 'formulaire') => {
+  if (!UUID_RX.test(String(id || ''))) throw new FormsApiError(`Identifiant de ${what} invalide.`);
+  return String(id);
+};
+
+async function currentUserId(c) {
+  try {
+    const { data } = await c.auth.getSession();
+    return data?.session?.user?.id || null;
+  } catch { return null; }
+}
+
+/**
+ * Temps réel : appelle onChange({ type, id }) à chaque création / modification
+ * d'une réponse du formulaire (aucune donnée de réponse transmise au rappel).
+ * La RLS de lecture s'applique côté serveur (forms ≥ read). onStatus reçoit
+ * 'SUBSCRIBED' | 'CHANNEL_ERROR' | 'TIMED_OUT' | 'CLOSED' | 'UNAVAILABLE'.
+ * @returns {() => void} désabonnement
+ */
+export function subscribeResponses(formId, onChange, onStatus = () => {}) {
+  let stopped = false;
+  let channel = null;
+  let c = null;
+  (async () => {
+    try {
+      requireUuid(formId);
+      c = await client();
+      if (stopped) return;
+      if (typeof c.channel !== 'function') { onStatus('UNAVAILABLE'); return; }
+      channel = c.channel(`form_responses:${formId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'form_responses', filter: `form_id=eq.${formId}` }, (payload) => {
+          if (stopped) return;
+          onChange({ type: payload?.eventType || 'UPDATE', id: payload?.new?.id || payload?.old?.id || null });
+        })
+        .subscribe((status) => { if (!stopped) onStatus(status); });
+    } catch {
+      if (!stopped) onStatus('UNAVAILABLE');
+    }
+  })();
+  return () => {
+    stopped = true;
+    if (channel && c) { try { c.removeChannel(channel); } catch { /* ignoré */ } }
+  };
+}
+
+/** Grille d'évaluation enregistrée : { criteria, blind, updated_at } ou null. */
+export async function getEvaluationGrid(formId) {
+  const c = await client();
+  const rows = adminCheck(await c.from('form_evaluation_grids').select('criteria, blind, updated_at').eq('form_id', requireUuid(formId)).limit(1));
+  return rows?.[0] || null;
+}
+
+/** Enregistre la grille (forms ≥ write). criteria : [{ id, label, max, weight }] */
+export async function saveEvaluationGrid(formId, { criteria, blind = true }) {
+  const list = (Array.isArray(criteria) ? criteria : []).map(c => ({
+    id: String(c.id), label: String(c.label || '').trim().slice(0, 80), max: Number(c.max), weight: Number(c.weight ?? 1),
+  }));
+  const c = await client();
+  return adminCheck(await c.from('form_evaluation_grids')
+    .upsert({ form_id: requireUuid(formId), criteria: list, blind: !!blind }, { onConflict: 'form_id' })
+    .select('criteria, blind, updated_at').single());
+}
+
+/**
+ * Évaluations visibles (les siennes ; toutes si forms ≥ write) + agrégats
+ * serveur par réponse + grille.
+ * @returns {Promise<{ evaluations: Array<{ id, responseId, evaluatorId, evaluatorName, scores, comment, conflict, conflictNote, updatedAt }>,
+ *   summary: Record<string, { n, mean, sd, conflicts }>, grid: object|null, userId: string|null }>}
+ */
+export async function listEvaluations(formId) {
+  const id = requireUuid(formId);
+  const c = await client();
+  const [rows, summary, grid, members, userId] = await Promise.all([
+    c.from('form_evaluations').select('id, response_id, evaluator, scores, comment, conflict, conflict_note, updated_at').eq('form_id', id).limit(20000).then(adminCheck),
+    adminRpc('form_evaluation_summary', { p_form: id }),
+    getEvaluationGrid(id),
+    c.from('workspace_members').select('user_id, email').eq('workspace_id', workspaceId()).then(r => (r.error ? [] : r.data || [])),
+    currentUserId(c),
+  ]);
+  const emails = new Map((members || []).map(m => [m.user_id, m.email]));
+  return {
+    evaluations: (rows || []).map(r => ({
+      id: r.id, responseId: r.response_id, evaluatorId: r.evaluator,
+      evaluatorName: r.evaluator === userId ? 'Moi' : emails.get(r.evaluator) || 'Évaluateur',
+      scores: r.scores || {}, comment: r.comment || '', conflict: !!r.conflict, conflictNote: r.conflict_note || '', updatedAt: r.updated_at,
+    })),
+    summary: summary || {},
+    grid,
+    userId,
+  };
+}
+
+/**
+ * Crée ou remplace SA PROPRE évaluation (l'évaluateur est imposé par le
+ * serveur : impossible d'écrire au nom d'un autre).
+ */
+export async function saveEvaluation({ formId, responseId, scores = {}, comment = '', conflict = false, conflictNote = '' }) {
+  const c = await client();
+  const uid = await currentUserId(c);
+  if (!uid) throw new FormsApiError('Session expirée : reconnecte-toi.');
+  const clean = {};
+  Object.entries(scores || {}).forEach(([k, v]) => { if (Number.isFinite(v)) clean[k] = v; });
+  return adminCheck(await c.from('form_evaluations').upsert({
+    response_id: requireUuid(responseId, 'réponse'), form_id: requireUuid(formId), evaluator: uid,
+    scores: conflict ? {} : clean, comment: String(comment || '').slice(0, 2000) || null,
+    conflict: !!conflict, conflict_note: conflict ? String(conflictNote || '').slice(0, 200) || null : null,
+  }, { onConflict: 'response_id,evaluator' }).select('id').single());
+}
+
+/** Supprime SA PROPRE évaluation (la RLS refuse celles des autres). */
+export async function deleteEvaluation(evaluationId) {
+  const c = await client();
+  const rows = adminCheck(await c.from('form_evaluations').delete().eq('id', requireUuid(evaluationId, 'évaluation')).select('id'));
+  if (!rows?.length) throw new FormsApiError('Seul l’auteur d’une évaluation peut la supprimer.');
+  return rows.length;
+}
+
+/** Réponses SANS identité pour l'évaluation à l'aveugle : [{ id, version, status, answers, score, waitlisted, created_at }] */
+export async function listResponsesForEvaluation(formId) {
+  return adminRpc('list_responses_for_evaluation', { p_form: requireUuid(formId) });
+}
+
+/**
+ * Entonnoir anonymisé (nombres uniquement) :
+ * { drafts_enabled, since, started, in_progress, abandoned, submitted_from_draft, submissions, completion_rate, abandon_rate }
+ */
+export async function getFormFunnel(formId) {
+  return adminRpc('form_funnel', { p_form: requireUuid(formId) });
+}

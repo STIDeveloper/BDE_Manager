@@ -43,7 +43,7 @@ npm install --prefix /tmp/pglite @electric-sql/pglite
 node supabase/validation/validate.mjs /tmp/pglite          # VERBOSE=1 pour voir les motifs de refus
 ```
 
-`validation/supabase_stub.sql` simule les schémas `auth` / `storage` de Supabase (et ses privilèges par défaut) ; lancer d'abord `node scripts/build-edge.mjs`. `validate.mjs` joue 198 contrôles : ceux de 0001 (RLS entre deux espaces et cinq rôles, invitations, trésorerie, coffre, numérotation sous appels entrelacés, vérification anonyme, audit, stockage) puis, via `forms-scenarios.mjs`, ceux de 0002 (publication, cœur réel de forms-submit avec le moteur, RLS, vote anonyme, automatisations, paiement, messages). PGlite n'est pas une dépendance du projet.
+`validation/supabase_stub.sql` simule les schémas `auth` / `storage` de Supabase (et ses privilèges par défaut) ; lancer d'abord `node scripts/build-edge.mjs`. `validate.mjs` joue 249 contrôles : ceux de 0001 (RLS entre deux espaces et cinq rôles, invitations, trésorerie, coffre, numérotation sous appels entrelacés, vérification anonyme, audit, stockage) puis, via `forms-scenarios.mjs`, ceux de 0002 (publication, cœur réel de forms-submit avec le moteur, RLS, vote anonyme, automatisations, paiement, messages), enfin ceux de 0003 (publication temps réel, un évaluateur ne peut ni modifier ni supprimer l'évaluation d'un autre, lecture interdite hors espace, grilles et barèmes, agrégats, RPC aveugle sans identité, entonnoir sans donnée personnelle). PGlite n'est pas une dépendance du projet.
 
 ## Limites connues
 
@@ -65,6 +65,16 @@ Formulaires publics (lien `/f/<slug>`), réponses traitées dans l'application, 
 - tables `forms`, `form_versions` (immuables), `form_responses`, `form_response_events`, `form_drafts`, `vote_rolls` / `vote_rights` / `vote_ballots`, `automations`, `automation_runs`, `rate_limits` — RLS partout ;
 - bucket privé **form-uploads** (10 Mo par fichier ; écriture uniquement par URL signée émise par `forms-submit`) ;
 - correctif de 0001 : `audit()` et `seed_default_grants()` ne sont plus appelables directement (Supabase accorde par défaut l'exécution de toute nouvelle fonction à `authenticated`).
+
+### 1 bis. Exécuter 0003_forms_admin.sql (administration des réponses)
+*SQL Editor* › *New query* › coller **tout** `migrations/0003_forms_admin.sql` › *Run* (résultat attendu : `Success. No rows returned`). Prérequis : 0001 puis 0002. Idempotent : relançable ; 0001 et 0002 ne sont pas modifiées. Effets :
+- **temps réel des réponses** : `form_responses` ajoutée à la publication `supabase_realtime` (les nouvelles réponses apparaissent sans attendre le sondage de 30 s). Supabase Realtime applique la RLS de lecture de chaque abonné : seuls les comptes ayant « Formulaires » ≥ lecture dans l'espace reçoivent les événements. Vérifier dans *Database › Publications › supabase_realtime* que `form_responses` est cochée ; sans elle, l'application revient d'elle-même au sondage ;
+- **évaluations des candidatures partagées** : tables `form_evaluation_grids` (grille, mode aveugle par défaut) et `form_evaluations` (une évaluation par évaluateur et par réponse). Évaluer exige « Formulaires » ≥ écriture ; chacun ne crée / modifie / supprime **que ses propres** évaluations (évaluateur imposé par le serveur) ; les évaluations individuelles sont lisibles par leur auteur et par le comité (≥ écriture) ; un compte en lecture seule ne voit que les agrégats (`form_evaluation_summary` : moyenne /20, écart-type, nombre, conflits d'intérêts exclus) ;
+- **mode aveugle** : `list_responses_for_evaluation` renvoie les réponses sans aucune identité (ni e-mail / compte / fiche membre du répondant, ni étiquettes, responsable ou valeurs calculées ; questions nom, e-mail, téléphone, adresse, signature, membre et questions « sensibles » retirées, y compris dans les sections répétables) ;
+- **complétion / abandons** : compteurs anonymes de brouillons (démarrés, envoyés, expirés) tenus par trigger ; `form_funnel` (≥ lecture) ne renvoie que des nombres (abandon = brouillon sans activité depuis plus de 24 h). Le comptage commence à l'installation de 0003 (les brouillons alors en cours sont comptés comme démarrés) ;
+- filet de sécurité : capacités `forms` / `tasks` re-semées si absentes (rien n'est écrasé).
+
+Les évaluations déjà saisies avant 0003 restent dans les données synchronisées de l'application (`forms.evaluations`) : elles ne sont pas recopiées sur le serveur (les identifiants d'évaluateur locaux ne correspondent pas aux comptes).
 
 ### 2. Cloudflare Turnstile (anti-robot)
 1. https://dash.cloudflare.com › *Turnstile* › *Add widget* : nom « BDE Manager », domaines `bde-manager.vercel.app` (+ `localhost` pour le développement), mode *Managed*.
@@ -125,6 +135,8 @@ Test rapide après déploiement : ouvrir un formulaire publié (`/f/<slug>`), en
 | `helloasso` (Edge) | `/checkout` (réponse + jeton de modification → URL de paiement) ; `/webhook` (revérification auprès de l'API) |
 | `form_responses` | lecture : capacité `forms` ≥ read ; traitement (statut, étiquettes, responsable, liste d'attente, suppression logique, « réglé hors ligne ») : ≥ write ; les réponses elles-mêmes et « payé » ne sont modifiables que par le serveur ; historique automatique (`form_response_events`) |
 | Répondant | `get_my_responses()` (compte connecté), `get_response_by_token(jeton)` (lien reçu) — sans étiquettes, responsable ni notes internes ; brouillons `save_form_draft` / `load_form_draft` (jeton aléatoire du navigateur, 30 jours) |
+| `form_evaluations`, `form_evaluation_grids` (0003) | évaluations des candidatures : écriture ≥ write sur SES évaluations uniquement ; agrégats `form_evaluation_summary` (≥ read) ; mode aveugle `list_responses_for_evaluation` (≥ read, sans identité) |
+| `form_draft_counters` (0003) | compteurs anonymes de brouillons, lus uniquement via `form_funnel` (≥ read) |
 | `automation_runs` | déclenchements enregistrés par trigger (`response.created`, `response.updated`, `response.status_changed` avec `trigger.status` facultatif, `payment.paid`), approbation (`forms` ≥ validate), exécution par l'app : `claim_automation_runs` (réservation 10 min) → `complete_automation_run` |
 
 ## Vote anonyme : garanties et limites

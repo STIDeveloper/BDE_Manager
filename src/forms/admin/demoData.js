@@ -10,7 +10,7 @@
 import { compileForm, evaluateForm, computeScore } from '../engine/index.js';
 import { statusesOf } from './analytics.js';
 
-const FIRST = ['Camille', 'Lina', 'Hugo', 'Yanis', 'Inès', 'Léo', 'Sarah', 'Noah', 'Jade', 'Adam', 'Chloé', 'Rayan', 'Manon', 'Ethan', 'Zoé', 'Nathan', 'Léa', 'Malik', 'Emma', 'Tom'];
+const FIRST = ['Camille', 'Lina', 'Adrien', 'Yanis', 'Ilona', 'Léo', 'Sarah', 'Noah', 'Jade', 'Adam', 'Clarisse', 'Ilyes', 'Manon', 'Ethan', 'Zoé', 'Maxence', 'Léa', 'Malik', 'Emma', 'Tom'];
 const LAST = ['Martin', 'Bernard', 'Dubois', 'Durand', 'Moreau', 'Laurent', 'Simon', 'Michel', 'Garcia', 'Roux', 'Fournier', 'Girard', 'Bonnet', 'Mercier', 'Blanc', 'Faure', 'Rousseau', 'Diallo', 'Nguyen', 'Petit'];
 const SENTENCES = [
   'J\'aimerais m\'investir dans la vie associative et rencontrer de nouvelles personnes.',
