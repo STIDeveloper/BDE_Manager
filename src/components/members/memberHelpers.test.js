@@ -5,6 +5,7 @@ import {
   buildRoleOptions, validateMemberForm, toMemberPayload, memberMatchesFilters,
   columnWhatsAppText, computeMemberStats, roleText, hasLegacyRole, safeFileName,
   roleFilterLabel, ROLE_FILTER_LEGACY, ROLE_FILTER_NONE,
+  MEMBER_ADMIN_FIELDS, adminFormValues, adminFilledCount,
 } from './memberHelpers.js';
 
 const cat = createDefaultCatalog();
@@ -80,4 +81,30 @@ test('statistiques par pôle / rôle / colonne', () => {
   assert.equal(s.byPole.find(p => p.key === 'communication').count, 1);
   assert.ok(s.byRole.some(r => r.label === 'DJ officiel (hors catalogue)'));
   assert.equal(s.byPole.reduce((n, p) => n + p.count, 0), 4);
+});
+
+test('champs administratifs : valeurs, validation, payload léger', () => {
+  assert.equal(MEMBER_ADMIN_FIELDS.length, 13);
+  const v = adminFormValues({ feeAmount: 5, imageConsent: 'peut-être', joinedAt: '2026-09-01' });
+  assert.equal(v.feeAmount, '5');
+  assert.equal(v.imageConsent, '');
+  assert.equal(v.joinedAt, '2026-09-01');
+  assert.equal(v.phone, '');
+  assert.equal(adminFilledCount(v), 2);
+
+  const base = { firstName: 'A', ...adminFormValues({}) };
+  assert.deepEqual(validateMemberForm(base), {});
+  assert.ok(validateMemberForm({ ...base, birthDate: '2026-13-45' }).birthDate);
+  assert.ok(validateMemberForm({ ...base, feeAmount: '-3' }).feeAmount);
+  assert.ok(validateMemberForm({ ...base, mandateStart: '2026-10-01', mandateEnd: '2026-09-01' }).mandateEnd);
+
+  // Champs vides non écrits (membre léger) ; vidés s'ils existaient.
+  const p1 = toMemberPayload(base);
+  assert.ok(!('phone' in p1) && !('feeAmount' in p1));
+  const p2 = toMemberPayload({ ...base, feeAmount: '7,5', imageConsent: 'oui', program: ' BUT GEA ' });
+  assert.equal(p2.feeAmount, 7.5);
+  assert.equal(p2.imageConsent, 'oui');
+  assert.equal(p2.program, 'BUT GEA');
+  const p3 = toMemberPayload(base, { phone: '0601' });
+  assert.equal(p3.phone, '');
 });

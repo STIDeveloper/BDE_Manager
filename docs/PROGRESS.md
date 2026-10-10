@@ -17,7 +17,7 @@
 |---|---|---|
 | Build | ✅ | `npm run build` OK. Précache SW 13 entrées / 874 Ko (avant : 35 / 6,4 Mo) |
 | ESLint | ✅ | `npx eslint .` → **0 erreur** (avant : 103) |
-| Tests | ✅ | `npm test` → **141/141** (avant : 37/40, commande cassée sous Node 24) |
+| Tests | ✅ | `npm test` → **281/281** (avant : 37/40, commande cassée sous Node 24) |
 | Migration des données existantes | ✅ | `src/core/tests/migration.test.js` (7) + parcours navigateur v10 → v11 |
 | CRUD rôles / pôles / niveaux | ✅ | `src/core/tests/catalogStore.test.js` (17) + parcours navigateur |
 | Catalogue dynamique (persisté) | ✅ | Persisté dans `bde-storage` v11 ; vérifié après rechargement |
@@ -28,6 +28,7 @@
 | Pont moteur → Kanban | ✅ | `src/core/tests/bridge.test.js` (4) |
 | Mobile (375 px) | ✅ | Navigateur : aucun débordement horizontal sur les 5 onglets ; cibles tactiles ≥ 40 px (Kanban) ; navigation inférieure |
 | PWA installable | ✅ / ⚠️ | Manifeste valide (id, scope, icônes any + maskable), 46 écrans de démarrage iOS. Page **contrôlée par le SW et servie depuis le cache** (vérifié). ⚠️ L'enregistrement automatique échoue dans le navigateur intégré de l'environnement de test (l'enregistrement manuel réussit) : à confirmer sur le déploiement réel |
+| Studio documents (27 modèles) | ✅ | Tests de chaque modèle × association complète/vide, test transversal du registre, moteurs PDF/HTML/Word testés sous Node ; navigateur : 22 attestations émises en 0,65 s, registre, vérification d'authenticité, mobile |
 | Déploiement Vercel | ⏳ | **En attente de ton autorisation** (aucun déploiement ni push effectué) |
 
 ---
@@ -86,6 +87,30 @@
 - Organisation : organigramme groupé par pôles du catalogue, labels échappés (Mermaid en `securityLevel: strict`), recommandations calculées sur les vraies données.
 - Moteur : organigramme live réécrit (Pointer Events tactiles, échange explicite, zoom non passif, fiche candidat accessible, MemberExplainModal enfin branché), compteurs placés / non placés corrigés, scénario « Personnalisé » resélectionnable.
 - Transverse : boîte de dialogue accessible commune (focus piégé et restauré, Échap, pile), `confirmDialog` à la place des 21 `window.confirm`, toasts accessibles, navigation conservée dans l'URL, barre de navigation mobile, cibles tactiles ≥ 40 px.
+
+## Phase 3 — Studio documents (terminé)
+Nouvel onglet **Documents** : génération automatique de documents professionnels et légaux à partir des données de l'application (membres, rôles, Drive, registre).
+
+**27 modèles** (`src/documents/templates/`) :
+- *Membres* : attestation d'adhésion, attestation d'engagement associatif (mention de l'article L. 611-9 du code de l'éducation), lettre de mission (accès Drive inclus), lettre de recommandation, attestation de fin de fonctions, dossier de passation (accès du coffre listés **par libellé uniquement**), charte d'engagement, reçu de cotisation (montant en lettres, mention « non fiscal »), certificat de participation.
+- *Gouvernance & légal* : convocation d'AG (contrôle du délai statutaire), feuille d'émargement, pouvoir, **procès-verbal d'AG avec calcul du quorum et des majorités** (simple, absolue, deux tiers, unanimité), compte rendu de bureau, **liste des dirigeants** (rappel de déclaration sous 3 mois en cas de changement de bureau), délégation de pouvoir, registre des membres.
+- *Organisation* : organigramme officiel, annuaire interne, fiche de pôle.
+- *Partenariats & finances* : convention de partenariat (articles numérotés), note de frais (contrôle IBAN mod 97), attestations d'événement en lot, budget prévisionnel.
+- *RGPD* : mention d'information, **registre des traitements calculé à partir des données réellement stockées**, autorisation de droit à l'image (détection des mineurs).
+
+**Fonctionnement** :
+- Contrat unique (`model.js` / `context.js`) : un modèle produit un document abstrait, rendu en aperçu A4 retouchable, PDF vectoriel (jsPDF, chargé à la demande), impression et Word ; une seule source de balisage pour éviter toute divergence.
+- **Émission** : chaque export reçoit un numéro chronologique (`BDE-2026-0001`, jamais réutilisé, même après suppression ou restauration d'une sauvegarde) et une **empreinte SHA-256** imprimée en pied de page ; le registre permet de **vérifier l'authenticité** d'un document papier. Brouillons : filigrane « BROUILLON » sur chaque page, aucun numéro.
+- **Suggestions intelligentes** (« À faire ») : passations, lettres de mission manquantes, déclaration de changement de dirigeants, reçus, droit à l'image, registre RGPD annuel…
+- Profil de l'association (logo, cachet, couleur, mentions légales) ; **signatures dessinées** (tactile/stylet) ou importées, stockées sur l'appareil.
+- Génération en lot sans fuite de valeurs entre membres (seules les valeurs modifiées s'imposent à tous).
+- Fiche membre : section « Informations administratives (optionnel) » (dates de mandat, formation, adresse, nationalité…) utilisée par les documents officiels.
+
+**Vérifications** : relecture visuelle des PDF (mise en page et français), parcours navigateur complet (galerie, suggestions, émission en lot, registre, vérification, mobile 375 px).
+
+**Corrigé pendant la vérification** : fiche « [Poste vacant] » du seed traitée comme une personne (exclue de tous les documents) ; aperçu mobile mal dimensionné à l'ouverture ; espaces perdues après le gras et chevauchement du pied de page dans le PDF ; modèles sans note juridique (détectés par le test transversal).
+
+**Limites** : les modèles sont **indicatifs** (à vérifier au regard des statuts ; conseil juridique pour les actes engageants) ; impression navigateur sans numéros de page ; dans Word le pied de page apparaît en fin de document ; les emojis sont retirés du PDF (polices standard) ; le studio et l'export PDF hors ligne nécessitent une première ouverture en ligne.
 
 ## Bugs trouvés pendant la vérification (et corrigés)
 - `bridge.js` : `createdColumns` hors de portée après refactorisation → « Appliquer au BDE » aurait échoué à chaque fois. Détecté par le lint, couvert depuis par `bridge.test.js`.

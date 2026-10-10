@@ -11,6 +11,7 @@ import {
   listRoles, listPoles, listLevels, CATALOG_LIMITS, LEVEL_KINDS, POLE_PALETTE,
 } from './core/catalog.js';
 import { migrateMainStore, STORE_VERSION } from './core/migrations.js';
+import { DEFAULT_ORGANIZATION } from './documents/context.js';
 import { migrateMemberRole, migratePresets, resolveRoleId } from './core/roleAliases.js';
 
 const DEFAULT_BADGES = [
@@ -164,6 +165,7 @@ const HISTORY_KEYS = [
   'drivePermissions', 'permissionNotes', 'rolePresets',
   'folders', 'folderTags',
   'poles', 'levels', 'roles',
+  'organization',
 ];
 const HISTORY_LIMIT = 30;
 const snapshotOf = (s) => Object.fromEntries(HISTORY_KEYS.map(k => [k, s[k]]));
@@ -186,6 +188,16 @@ const labelTaken = (map, label, exceptId) => {
 };
 const isColor = (c) => typeof c === 'string' && (POLE_PALETTE[c] || /^#[0-9a-f]{6}$/i.test(c));
 const LEVEL_KIND_SET = new Set(LEVEL_KINDS.map(k => k.id));
+
+/** Compteurs de numérotation : maximum par année des deux sources. */
+function mergeCounters(a = {}, b = {}) {
+  const out = { ...a };
+  Object.entries(b).forEach(([year, n]) => {
+    const v = Number(n);
+    if (Number.isFinite(v)) out[year] = Math.max(out[year] || 0, v);
+  });
+  return out;
+}
 
 /** Renumérote `order` (0..n-1) selon l'ordre de `ids`. */
 function withOrder(map, ids) {
@@ -219,6 +231,10 @@ function detachOrphanMembers(members, roles, previousRoles) {
 }
 
 const mainStorage = createSilenceableStorage();
+
+// Taille max d'une image (logo, cachet, signature) stockée en dataURL :
+// le localStorage est limité à ~5 Mo pour toute l'application.
+const MAX_IMAGE_DATAURL = 400 * 1024;
 
 // File d'attente des écritures du coffre (voir _vaultQueue).
 let vaultWriteQueue = Promise.resolve();
@@ -612,6 +628,66 @@ export const useStore = create(
       },
 
       resetCatalog: () => get().replaceCatalog(createDefaultCatalog()),
+
+      // ========== STUDIO DOCUMENTS ==========
+      // Profil de l'association (en-têtes, mentions légales, signatures) et
+      // registre chronologique des documents émis. Les numéros ne sont JAMAIS
+      // réutilisés, même si une entrée du registre est supprimée.
+      organization: { ...DEFAULT_ORGANIZATION },
+      documentLog: [],
+      documentCounters: {},
+
+      updateOrganization: (patch = {}) => {
+        const clean = { ...patch };
+        delete clean.signatures;
+        for (const key of ['logo', 'stamp']) {
+          if (key in clean && clean[key] !== null) {
+            if (typeof clean[key] !== 'string' || !/^data:image\/(png|jpeg|webp);base64,/.test(clean[key])) return fail('Image invalide (PNG, JPEG ou WebP attendu).');
+            if (clean[key].length > MAX_IMAGE_DATAURL) return fail('Image trop lourde : elle doit faire moins de 400 Ko une fois compressée.');
+          }
+        }
+        if ('name' in clean && !String(clean.name || '').trim()) return fail('Le nom de l’association est obligatoire.');
+        get()._pushHistory();
+        set((s) => ({ organization: { ...DEFAULT_ORGANIZATION, ...s.organization, ...clean } }));
+        return ok();
+      },
+
+      setSignature: (memberId, dataUrl) => {
+        if (!memberId) return fail('Signataire inconnu.');
+        if (dataUrl !== null && (typeof dataUrl !== 'string' || !/^data:image\/(png|jpeg|webp);base64,/.test(dataUrl) || dataUrl.length > MAX_IMAGE_DATAURL)) {
+          return fail('Signature invalide ou trop lourde.');
+        }
+        get()._pushHistory();
+        set((s) => {
+          const signatures = { ...(s.organization?.signatures || {}) };
+          if (dataUrl) signatures[memberId] = dataUrl; else delete signatures[memberId];
+          return { organization: { ...DEFAULT_ORGANIZATION, ...s.organization, signatures } };
+        });
+        return ok();
+      },
+
+      /** Réserve `count` numéros consécutifs pour l'année donnée (ex. BDE-2026-0007). */
+      reserveDocumentRefs: (count = 1, year = new Date().getFullYear()) => {
+        const n = Math.max(1, Math.min(500, Math.floor(count)));
+        const s = get();
+        const prefix = (s.organization?.shortName || 'BDE').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 12) || 'BDE';
+        const start = (s.documentCounters?.[year] || 0) + 1;
+        set((st) => ({ documentCounters: { ...st.documentCounters, [year]: start + n - 1 } }));
+        return Array.from({ length: n }, (_, i) => `${prefix}-${year}-${String(start + i).padStart(4, '0')}`);
+      },
+
+      /** Ajoute des entrées au registre (les plus récentes en tête, 1000 max). */
+      logDocuments: (entries = []) => {
+        const stamped = entries.filter(Boolean).map(e => ({
+          id: crypto.randomUUID(),
+          createdAt: new Date().toISOString(),
+          ...e,
+        }));
+        set((s) => ({ documentLog: [...stamped, ...s.documentLog].slice(0, 1000) }));
+        return stamped;
+      },
+
+      removeDocumentLogEntry: (id) => set((s) => ({ documentLog: s.documentLog.filter(e => e.id !== id) })),
 
       // ========== DRIVE ==========
       folders: DEFAULT_FOLDERS,
@@ -1030,6 +1106,9 @@ export const useStore = create(
             drivePermissions: s.drivePermissions,
             permissionNotes: s.permissionNotes,
             rolePresets: s.rolePresets,
+            organization: s.organization,
+            documentLog: s.documentLog,
+            documentCounters: s.documentCounters,
             vaultSalt: s.vaultSalt,
             vaultVerifier: s.vaultVerifier,
             vaultEntriesBlob: s.vaultEntriesBlob,
@@ -1078,6 +1157,10 @@ export const useStore = create(
           drivePermissions: objOr(d.drivePermissions, {}),
           permissionNotes: objOr(d.permissionNotes, {}),
           rolePresets: migratePresets(objOr(d.rolePresets, DEFAULT_ROLE_PRESETS), catalog),
+          organization: { ...DEFAULT_ORGANIZATION, ...objOr(d.organization, get().organization) },
+          documentLog: arrayOr(d.documentLog, get().documentLog),
+          // Les compteurs ne reculent jamais (aucun numéro réutilisé).
+          documentCounters: mergeCounters(get().documentCounters, objOr(d.documentCounters, {})),
           vaultSalt: d.vaultSalt ?? null,
           vaultVerifier: d.vaultVerifier ?? null,
           vaultEntriesBlob: d.vaultEntriesBlob ?? null,
@@ -1120,7 +1203,13 @@ export const useStore = create(
           levels: merged.levels || current.levels,
           roles: merged.roles || current.roles,
         });
-        return { ...merged, ...catalog };
+        return {
+          ...merged,
+          ...catalog,
+          organization: { ...DEFAULT_ORGANIZATION, ...(merged.organization || {}) },
+          documentLog: Array.isArray(merged.documentLog) ? merged.documentLog : [],
+          documentCounters: merged.documentCounters && typeof merged.documentCounters === 'object' ? merged.documentCounters : {},
+        };
       },
     }
   )

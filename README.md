@@ -31,6 +31,15 @@ Application web (PWA installable, 100 % client-side, sans backend) de gestion d'
 - Analyse de stabilité (Monte-Carlo) ; organigramme interactif (zoom, échange verrouillé)
 - Application au Kanban en une étape annulable
 
+### Studio documents
+- 27 modèles professionnels et légaux générés à partir des données : attestations, lettres de mission,
+  passations, convocation et PV d'AG (quorum et majorités calculés), liste des dirigeants, conventions,
+  notes de frais, registre RGPD, droit à l'image…
+- Génération en lot, aperçu A4 retouchable, export PDF / impression / Word
+- Numérotation chronologique + empreinte SHA-256 : registre et vérification d'authenticité
+- Suggestions automatiques (« À faire »), profil de l'association, logo, cachet, signatures dessinées
+- Modèles indicatifs : à vérifier au regard de tes statuts
+
 ### Gouvernance Google Drive
 - Matrice de permissions, arborescence de dossiers, presets par rôle
 - Vérifications automatiques, recommandations basées sur les vraies données

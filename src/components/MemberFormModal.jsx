@@ -1,11 +1,12 @@
 import { useId, useMemo, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { ChevronDown, FileText, Plus } from 'lucide-react';
 import Modal from './Modal';
 import { useStore } from '../store';
 import { useCatalog } from '../core/useCatalog';
 import { toast } from './ui/toastStore';
 import {
   buildRoleOptions, validateMemberForm, toMemberPayload, memberDisplayName,
+  MEMBER_ADMIN_FIELDS, adminFormValues, adminFilledCount,
 } from './members/memberHelpers';
 
 const inputCls = (invalid) =>
@@ -68,7 +69,10 @@ function MemberForm({ formId, member, defaultColumnId, onDone }) {
     badges: Array.isArray(member?.badges) ? member.badges : [],
     columnId: member?.columnId || defaultColumnId || columns[0]?.id || '',
     notes: member?.notes || '',
+    ...adminFormValues(member),
   }));
+  // Section administrative ouverte d'office si le membre a déjà des infos.
+  const [adminOpen, setAdminOpen] = useState(() => adminFilledCount(adminFormValues(member)) > 0);
   // Rôle d'origine : un ancien texte libre hors catalogue reste sélectionnable.
   const [initialRole] = useState(() => member?.mainRole || '');
   const [errors, setErrors] = useState({});
@@ -111,11 +115,17 @@ function MemberForm({ formId, member, defaultColumnId, onDone }) {
     const errs = validateMemberForm(form);
     setErrors(errs);
     if (Object.keys(errs).length > 0) {
+      const adminErr = MEMBER_ADMIN_FIELDS.find(f => errs[f.key]);
+      if (!errs.firstName && !errs.email && adminErr) {
+        setAdminOpen(true);
+        setTimeout(() => document.getElementById(`${formId}-adm-${adminErr.key}`)?.focus(), 0);
+        return;
+      }
       const first = errs.firstName ? ids.firstName : ids.email;
       document.getElementById(first)?.focus();
       return;
     }
-    const payload = toMemberPayload(form);
+    const payload = toMemberPayload(form, member);
     if (member) {
       updateMember(member.id, payload);
       toast.success('Membre modifié', memberDisplayName(payload));
@@ -202,6 +212,8 @@ function MemberForm({ formId, member, defaultColumnId, onDone }) {
           className={`${inputCls(false)} min-h-[70px] text-sm`} placeholder="Infos diverses, contexte, historique..." />
       </div>
 
+      <AdminSection formId={formId} form={form} set={set} errors={errors} open={adminOpen} onToggle={() => setAdminOpen(o => !o)} />
+
       <fieldset>
         <legend id={ids.badges} className={`${labelCls} mb-2`}>Badges</legend>
         <div className="flex flex-wrap gap-2 mb-3 max-h-40 overflow-y-auto p-1">
@@ -234,5 +246,55 @@ function MemberForm({ formId, member, defaultColumnId, onDone }) {
         </div>
       </fieldset>
     </form>
+  );
+}
+
+/** Section repliable « Informations administratives (optionnel) ». */
+function AdminSection({ formId, form, set, errors, open, onToggle }) {
+  const regionId = `${formId}-admin`;
+  const filled = adminFilledCount(form);
+  const hasError = MEMBER_ADMIN_FIELDS.some(f => errors[f.key]);
+  return (
+    <div className={`rounded-xl border ${hasError ? 'border-red-500/60' : 'border-line'}`}>
+      <button type="button" onClick={onToggle} aria-expanded={open} aria-controls={regionId}
+        className="w-full flex items-center gap-2 px-3 py-2.5 text-left rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60">
+        <FileText size={15} className="text-dim shrink-0" aria-hidden="true" />
+        <span className="text-sm font-semibold text-ink">Informations administratives <span className="font-normal text-dim">(optionnel)</span></span>
+        {filled > 0 && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-300">{filled} renseigné{filled > 1 ? 's' : ''}</span>}
+        <ChevronDown size={16} className={`ml-auto text-dim transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+      </button>
+      {open && (
+        <div id={regionId} className="px-3 pb-3 space-y-3">
+          <p className="text-xs text-dim">
+            Utilisées uniquement pour générer les documents (attestations, listes officielles). Laisse vide si inutile.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {MEMBER_ADMIN_FIELDS.map(f => {
+              const id = `${formId}-adm-${f.key}`;
+              const err = errors[f.key];
+              return (
+                <div key={f.key} className={f.wide ? 'sm:col-span-2' : ''}>
+                  <label htmlFor={id} className={labelCls}>{f.label}</label>
+                  {f.type === 'consent' ? (
+                    <select id={id} value={form[f.key]} onChange={set(f.key)} className={inputCls(false)}>
+                      <option value="">Non renseigné</option>
+                      <option value="oui">Oui — autorise l'utilisation de son image</option>
+                      <option value="non">Non — refuse</option>
+                    </select>
+                  ) : (
+                    <input id={id} type={f.type === 'date' ? 'date' : f.type === 'number' ? 'number' : 'text'}
+                      inputMode={f.type === 'number' ? 'decimal' : f.inputMode} min={f.type === 'number' ? 0 : undefined}
+                      step={f.type === 'number' ? '0.01' : undefined}
+                      value={form[f.key]} onChange={set(f.key)} placeholder={f.placeholder} autoComplete="off"
+                      className={inputCls(err)} aria-invalid={!!err} aria-describedby={err ? `${id}-err` : undefined} />
+                  )}
+                  {err && <p id={`${id}-err`} className="text-xs text-red-500 mt-1">{err}</p>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

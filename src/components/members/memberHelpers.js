@@ -70,18 +70,71 @@ export function buildRoleOptions(catalog, initialRole = '') {
 
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/**
+ * Champs administratifs OPTIONNELS (Studio documents : attestations, listes
+ * officielles). Voir le contrat dans src/documents/context.js.
+ * type : 'text' | 'date' | 'number' | 'consent'
+ */
+export const MEMBER_ADMIN_FIELDS = [
+  { key: 'phone', label: 'Téléphone', type: 'text', inputMode: 'tel', placeholder: '06 12 34 56 78' },
+  { key: 'joinedAt', label: 'Date d\'adhésion', type: 'date' },
+  { key: 'mandateStart', label: 'Début de fonctions', type: 'date' },
+  { key: 'mandateEnd', label: 'Fin de fonctions', type: 'date' },
+  { key: 'program', label: 'Formation', type: 'text', placeholder: 'BUT Informatique' },
+  { key: 'year', label: 'Année d\'études', type: 'text', placeholder: 'BUT 2' },
+  { key: 'profession', label: 'Profession', type: 'text', placeholder: 'Étudiant(e)' },
+  { key: 'nationality', label: 'Nationalité', type: 'text', placeholder: 'Française' },
+  { key: 'birthDate', label: 'Date de naissance', type: 'date' },
+  { key: 'address', label: 'Adresse postale', type: 'text', placeholder: '12 rue …, 93100 Montreuil', wide: true },
+  { key: 'feePaidAt', label: 'Cotisation payée le', type: 'date' },
+  { key: 'feeAmount', label: 'Montant de la cotisation (€)', type: 'number' },
+  { key: 'imageConsent', label: 'Droit à l\'image', type: 'consent' },
+];
+
+const ADMIN_KEYS = MEMBER_ADMIN_FIELDS.map(f => f.key);
+const DATE_RX = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Valeurs administratives d'un membre pour le formulaire (chaînes). */
+export function adminFormValues(member) {
+  return Object.fromEntries(ADMIN_KEYS.map(k => {
+    const v = member?.[k];
+    if (k === 'feeAmount') return [k, v === undefined || v === null || v === '' ? '' : String(v)];
+    if (k === 'imageConsent') return [k, v === 'oui' || v === 'non' ? v : ''];
+    return [k, typeof v === 'string' ? v : ''];
+  }));
+}
+
+/** Nombre de champs administratifs renseignés. */
+export function adminFilledCount(form) {
+  return ADMIN_KEYS.filter(k => String(form?.[k] ?? '').trim() !== '').length;
+}
+
 /** @returns {Record<string,string>} erreurs par champ (objet vide si valide). */
 export function validateMemberForm(form) {
   const errors = {};
   if (!String(form?.firstName || '').trim()) errors.firstName = 'Le prénom est obligatoire.';
   const email = String(form?.email || '').trim();
   if (email && !EMAIL_RX.test(email)) errors.email = 'Adresse email invalide (ex. prenom.nom@gmail.com).';
+  // Champs administratifs (facultatifs) : formats seulement.
+  MEMBER_ADMIN_FIELDS.filter(f => f.type === 'date').forEach(f => {
+    const v = String(form?.[f.key] || '').trim();
+    if (v && (!DATE_RX.test(v) || Number.isNaN(new Date(v).getTime()))) errors[f.key] = 'Date invalide.';
+  });
+  const fee = String(form?.feeAmount ?? '').trim().replace(',', '.');
+  if (fee && (!Number.isFinite(Number(fee)) || Number(fee) < 0)) errors.feeAmount = 'Montant invalide.';
+  if (form?.mandateStart && form?.mandateEnd && !errors.mandateStart && !errors.mandateEnd && form.mandateEnd < form.mandateStart) {
+    errors.mandateEnd = 'La fin de fonctions précède le début.';
+  }
   return errors;
 }
 
-/** Données normalisées envoyées au store (champs éditables uniquement). */
-export function toMemberPayload(form) {
-  return {
+/**
+ * Données normalisées envoyées au store (champs éditables uniquement).
+ * Champs administratifs : inclus s'ils sont renseignés, ou vidés s'ils
+ * l'étaient auparavant (`original`) — un membre sans ces infos reste léger.
+ */
+export function toMemberPayload(form, original = null) {
+  const payload = {
     firstName: String(form.firstName || '').trim(),
     lastName: String(form.lastName || '').trim(),
     email: String(form.email || '').trim(),
@@ -90,6 +143,24 @@ export function toMemberPayload(form) {
     notes: form.notes || '',
     badges: Array.isArray(form.badges) ? form.badges : [],
   };
+  ADMIN_KEYS.forEach(k => {
+    if (!(k in form)) return;
+    const raw = String(form[k] ?? '').trim();
+    const had = original && original[k] !== undefined && original[k] !== null && original[k] !== '';
+    if (!raw) {
+      if (had) payload[k] = '';
+      return;
+    }
+    if (k === 'feeAmount') {
+      const n = Number(raw.replace(',', '.'));
+      if (Number.isFinite(n)) payload[k] = n;
+    } else if (k === 'imageConsent') {
+      if (raw === 'oui' || raw === 'non') payload[k] = raw;
+    } else {
+      payload[k] = raw;
+    }
+  });
+  return payload;
 }
 
 export const memberDisplayName = (m) =>

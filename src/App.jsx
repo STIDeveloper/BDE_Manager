@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback } from 'react';
-import { Lock, LayoutDashboard, BarChart3, FolderTree, Network, Settings2 } from 'lucide-react';
+import { useEffect, useState, useCallback, lazy, Suspense } from 'react';
+import { Lock, LayoutDashboard, BarChart3, FolderTree, Network, Settings2, FileText, Loader2 } from 'lucide-react';
 import { useStore } from './store';
 import KanbanBoard from './components/KanbanBoard';
 import Stats from './components/Stats';
@@ -13,12 +13,16 @@ import { ToastContainer } from './components/ui/Toast';
 import ConfirmHost from './components/ui/ConfirmHost';
 import RolesManager from './components/roles/manager/RolesManager';
 
+// Studio documents chargé à la demande (modèles + moteurs de rendu).
+const DocumentsStudio = lazy(() => import('./components/documents/DocumentsStudio'));
+
 const TABS = [
-  { id: 'kanban',    label: 'Membres',      icon: LayoutDashboard },
-  { id: 'stats',     label: 'Stats',        icon: BarChart3 },
-  { id: 'org',       label: 'Organisation', icon: Network },
-  { id: 'drive',     label: 'Drive',        icon: FolderTree },
-  { id: 'sensitive', label: 'Coffre',       icon: Lock },
+  { id: 'kanban',    label: 'Membres',      short: 'Membres', icon: LayoutDashboard },
+  { id: 'stats',     label: 'Stats',        short: 'Stats',   icon: BarChart3 },
+  { id: 'org',       label: 'Organisation', short: 'Orga',    icon: Network },
+  { id: 'drive',     label: 'Drive',        short: 'Drive',   icon: FolderTree },
+  { id: 'documents', label: 'Documents',    short: 'Docs',    icon: FileText },
+  { id: 'sensitive', label: 'Coffre',       short: 'Coffre',  icon: Lock },
 ];
 const TAB_IDS = new Set(TABS.map(t => t.id));
 
@@ -115,6 +119,15 @@ export default function App() {
         {activeTab === 'stats' && <Stats />}
         {activeTab === 'org' && <OrganisationTab />}
         {activeTab === 'drive' && <DriveManager />}
+        {activeTab === 'documents' && (
+          <Suspense fallback={(
+            <div role="status" className="flex items-center gap-2 text-sm text-dim py-10 justify-center">
+              <Loader2 size={16} className="animate-spin" aria-hidden="true" /> Chargement du studio documents…
+            </div>
+          )}>
+            <DocumentsStudio />
+          </Suspense>
+        )}
         {activeTab === 'sensitive' && <Vault />}
       </main>
 
@@ -123,7 +136,7 @@ export default function App() {
         aria-label="Sections"
         className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-surface/95 backdrop-blur-md border-t border-line pb-[env(safe-area-inset-bottom)]"
       >
-        <div className="grid grid-cols-5">
+        <div className="grid grid-cols-6">
           {TABS.map(t => {
             const Icon = t.icon;
             const isActive = activeTab === t.id;
@@ -133,11 +146,12 @@ export default function App() {
                 type="button"
                 onClick={() => goTo(t.id)}
                 aria-current={isActive ? 'page' : undefined}
-                className={`flex flex-col items-center justify-center gap-0.5 min-h-[56px] text-[11px] font-medium transition-colors focus:outline-none focus-visible:bg-elevated ${
+                className={`flex flex-col items-center justify-center gap-0.5 min-h-[56px] text-[10px] font-medium transition-colors focus:outline-none focus-visible:bg-elevated ${
                   isActive ? 'text-blue-500' : 'text-dim'
                 }`}>
                 <Icon size={20} aria-hidden="true" />
-                <span className="truncate max-w-full px-1">{t.label}</span>
+                <span className="truncate max-w-full px-1" aria-hidden="true">{t.short}</span>
+                <span className="sr-only">{t.label}</span>
               </button>
             );
           })}
