@@ -1,7 +1,7 @@
 // Liste des formulaires : cartes, recherche, filtres, actions.
 import { useMemo, useState, useId } from 'react';
 import {
-  Plus, Search, ClipboardList, Copy, Archive, ArchiveRestore, Trash2, Link2, QrCode, Code2, FolderOpen, MoreVertical, Download,
+  Plus, Search, ClipboardList, Copy, Archive, ArchiveRestore, Trash2, Link2, QrCode, Code2, FolderOpen, MoreVertical, Download, Inbox,
 } from 'lucide-react';
 import { useFormsStore, hasUnpublishedChanges } from './store.js';
 import { FORM_KINDS } from '../../forms/schema.js';
@@ -190,6 +190,9 @@ function FormCard({ def, publication, onShare }) {
         <span className={`badge ${meta.badge}`}>{meta.label}</span>
         {def.publishedVersion ? <span className="badge badge-brand">v{def.publishedVersion} publiée</span> : null}
         {dirty && <span className="badge badge-amber">Modifications non publiées</span>}
+        <button type="button" className="btn-ghost !py-0.5 !px-2 !text-xs ml-auto" onClick={() => navigate('forms', def.id, 'reponses')} aria-label={`Réponses de ${def.title}`}>
+          <Inbox size={13} aria-hidden="true" /> Réponses
+        </button>
       </div>
       <div className="mt-auto flex items-center justify-between gap-2 text-xs text-muted">
         <button type="button" onClick={copyLink} className="font-mono truncate hover:text-ink rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60" title="Copier le lien">

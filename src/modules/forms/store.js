@@ -5,6 +5,10 @@
 //   forms.definitions  { [formId]: FormDefinition }         (brouillons)
 //   forms.history      { [formId]: Snapshot[] }             (instantanés, 50 max)
 //   forms.publications { [formId]: { serverFormId?, versions: [{ version, slug, publishedAt, hash }], publishedHash } }
+//   forms.evaluations  { ['<formId>:<responseId>:<evaluatorId>']: Evaluation }  (candidatures, src/forms/admin/)
+//     Evaluation : { id, formId, responseId, evaluatorId, evaluatorName, scores: { [critèreId]: number },
+//                    comment?, conflict?: boolean, conflictNote?, updatedAt }
+//   forms.evaluationGrids { [formId]: { id: formId, criteria: [{ id, label, max, weight }], blindDefault, updatedAt } }
 // Snapshot : { id, at, label, definition }
 // Annuler / rétablir : piles en mémoire (non persistées), propres à
 // l'éditeur (useFormUndo).
@@ -72,11 +76,13 @@ export const useFormsStore = createModuleStore({
   name: 'forms',
   label: 'Formulaires',
   version: 1,
-  initialState: { definitions: {}, history: {}, publications: {} },
+  initialState: { definitions: {}, history: {}, publications: {}, evaluations: {}, evaluationGrids: {} },
   slices: [
     { key: 'definitions', kind: 'map', capability: 'forms' },
     { key: 'history', kind: 'map', capability: 'forms' },
     { key: 'publications', kind: 'map', capability: 'forms' },
+    { key: 'evaluations', kind: 'map', capability: 'forms', sensitive: true },
+    { key: 'evaluationGrids', kind: 'map', capability: 'forms' },
   ],
   actions: (set, get) => {
     const write = (def) => {
@@ -215,6 +221,25 @@ export const useFormsStore = createModuleStore({
       importForm: (json) => {
         const data = typeof json === 'string' ? JSON.parse(json) : json;
         return get().createForm(normalizeDefinition(data), 'Import JSON');
+      },
+
+      // ── Évaluations des candidatures (administration des réponses) ──
+      saveEvaluation: (ev) => {
+        if (!ev?.formId || !ev.responseId || !ev.evaluatorId) return null;
+        const id = `${ev.formId}:${ev.responseId}:${ev.evaluatorId}`;
+        const rec = { ...ev, id, updatedAt: nowIso() };
+        set(s => ({ evaluations: { ...s.evaluations, [id]: rec } }));
+        return rec;
+      },
+      deleteEvaluation: (id) => set(s => {
+        if (!s.evaluations[id]) return {};
+        const { [id]: _e, ...evaluations } = s.evaluations;
+        return { evaluations };
+      }),
+      saveEvaluationGrid: (formId, grid) => {
+        const rec = { ...grid, id: formId, updatedAt: nowIso() };
+        set(s => ({ evaluationGrids: { ...s.evaluationGrids, [formId]: rec } }));
+        return rec;
       },
 
       /** Enregistre une publication réussie (serveur). */

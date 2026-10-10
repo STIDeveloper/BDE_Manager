@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { Copy, Download, Settings2 } from 'lucide-react';
+import SharePanel from '../../forms/share/SharePanel.jsx';
 import Modal from '../../components/Modal.jsx';
 import { navigate } from '../../core/router.js';
 import { toast } from '../../components/ui/toastStore.js';
@@ -42,7 +43,11 @@ export default function ShareModal({ def, mode = 'link', onClose }) {
       <div className="space-y-4">
         <Segmented label="Mode de partage" value={tab} onChange={setTab} options={[
           { value: 'link', label: 'Lien' }, { value: 'qr', label: 'QR code' }, { value: 'embed', label: 'Intégration' },
+          { value: 'kit', label: 'Affiche & kit' },
         ]} />
+        {tab === 'kit' && (
+          <SharePanel slug={def.slug} title={def.title} description={def.description} published={!!def.publishedVersion} embed={def.settings?.embed} />
+        )}
         {!def.publishedVersion && (
           <p className="text-xs rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200 p-2.5">
             Ce formulaire n'est pas encore publié : le lien ne fonctionnera qu'après sa publication.

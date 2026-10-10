@@ -1,11 +1,10 @@
 // ============================================================
 // ÉDITEUR D'UN FORMULAIRE (#/forms/<id>[/<onglet>])
 // ============================================================
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, Undo2, Redo2, History, AlertTriangle, CheckCircle2, Share2, Rocket, Hammer, GitBranch, Palette as PaletteIcon,
-  Settings2, Eye, Cloud, AlertCircle, X,
-} from 'lucide-react';
+  Settings2, Eye, Cloud, AlertCircle, X, Inbox, Vote } from 'lucide-react';
 import { useFormsStore, useFormUndo, hasUnpublishedChanges } from '../store.js';
 import { validateDefinition, collectRefs, tryParse, flattenItems } from '../../../forms/engine/index.js';
 import { useCan } from '../../../core/permissions.js';
@@ -27,6 +26,12 @@ import PublishTab, { IssuesList } from './PublishTab.jsx';
 import HistoryModal from './HistoryModal.jsx';
 import ShareModal from '../ShareModal.jsx';
 
+// Administration des réponses (src/forms/admin/) chargée à la demande
+const adminLoader = Object.values(import.meta.glob('../../../forms/admin/ResponsesAdmin.jsx'))[0] || null;
+const ResponsesAdmin = adminLoader ? lazy(adminLoader) : null;
+// Gestion d'élection (formulaires de type « vote »).
+const ElectionManager = lazy(() => import('../../../forms/vote/ElectionManager.jsx'));
+
 const TABS = [
   { id: 'build', label: 'Construire', icon: Hammer },
   { id: 'logic', label: 'Logique', icon: GitBranch },
@@ -34,6 +39,8 @@ const TABS = [
   { id: 'settings', label: 'Réglages', icon: Settings2 },
   { id: 'preview', label: 'Aperçu', icon: Eye },
   { id: 'publish', label: 'Publication', icon: Rocket },
+  ...(ResponsesAdmin ? [{ id: 'reponses', label: 'Réponses', icon: Inbox }] : []),
+  { id: 'election', label: 'Élection', icon: Vote, kind: 'vote' },
 ];
 const IDLE_SNAPSHOT_MS = 30000;
 const EMPTY_STACK = { past: [], future: [] };
@@ -299,7 +306,7 @@ export default function Editor({ formId, initialTab }) {
 
       <nav aria-label="Sections de l'éditeur" className="overflow-x-auto -mx-1 px-1">
         <div role="tablist" className="inline-flex gap-1 p-1 bg-elevated border border-line rounded-xl">
-          {TABS.map(t => (
+          {TABS.filter(t => !t.kind || t.kind === def.kind).map(t => (
             <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 ${tab === t.id ? 'bg-surface text-ink shadow-sm border border-line' : 'text-dim hover:text-ink border border-transparent'}`}>
               <t.icon size={14} aria-hidden="true" /> {t.label}
@@ -323,6 +330,16 @@ export default function Editor({ formId, initialTab }) {
             selectedId={selection?.kind === 'item' ? selection.id : null} onItemClick={id => select({ kind: 'item', id, tab: 'build' }, { showProps: true })} />
         )}
         {tab === 'publish' && <PublishTab def={def} issues={issues} onPickIssue={pickIssue} onShare={setShare} />}
+        {tab === 'election' && def.kind === 'vote' && (
+          <Suspense fallback={<p className="text-sm text-dim p-6" role="status">Chargement de l'élection…</p>}>
+            <ElectionManager formId={def.id} />
+          </Suspense>
+        )}
+        {tab === 'reponses' && ResponsesAdmin && (
+          <Suspense fallback={<p className="text-sm text-dim p-6" role="status">Chargement des réponses…</p>}>
+            <ResponsesAdmin def={def} />
+          </Suspense>
+        )}
       </div>
 
       {showHistory && <HistoryModal formId={formId} canWrite={canWrite} onClose={() => setShowHistory(false)} />}
