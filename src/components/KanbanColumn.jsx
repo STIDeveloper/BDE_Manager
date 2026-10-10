@@ -64,7 +64,7 @@ function ColumnMenu({ title, canMoveLeft, canMoveRight, onRename, onMoveLeft, on
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`Actions de la colonne ${title}`}
-        className="text-dim hover:text-ink transition-colors p-1.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+        className="tap text-dim hover:text-ink transition-colors p-1.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
       >
         <MoreVertical size={15} aria-hidden="true" />
       </button>
@@ -203,7 +203,7 @@ export default function KanbanColumn({ column, members, onAddMember, onEditMembe
                 <button type="button" onClick={exportToWhatsApp}
                   aria-label={`Exporter la colonne ${column.title} pour WhatsApp`}
                   title="Exporter pour WhatsApp"
-                  className="text-dim hover:text-emerald-500 transition-colors p-1.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60">
+                  className="tap text-dim hover:text-emerald-500 transition-colors p-1.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60">
                   <Download size={15} aria-hidden="true" />
                 </button>
                 <ColumnMenu

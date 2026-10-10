@@ -137,3 +137,14 @@ button, a, .transition-smooth {
   transition-duration: 150ms;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
+/* Cibles tactiles : sur écran tactile (pointeur grossier), les boutons-icônes
+   marqués .tap atteignent 40 × 40 px (recommandation WCAG 2.5.5 / Apple HIG). */
+@media (pointer: coarse) {
+  .tap {
+    min-width: 40px;
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}

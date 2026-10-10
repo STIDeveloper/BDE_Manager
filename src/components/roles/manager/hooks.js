@@ -101,11 +101,9 @@ export function useDialogBehavior(panelRef, { onClose, initialFocusRef } = {}) {
     const previouslyFocused = document.activeElement;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    const raf = requestAnimationFrame(() => {
-      (initialFocusRef?.current || panelRef.current)?.focus();
-    });
+    // DOM déjà monté : focus immédiat (indépendant du rendu graphique).
+    (initialFocusRef?.current || panelRef.current)?.focus();
     return () => {
-      cancelAnimationFrame(raf);
       document.body.style.overflow = prevOverflow;
       if (previouslyFocused instanceof HTMLElement && document.contains(previouslyFocused)) {
         previouslyFocused.focus();

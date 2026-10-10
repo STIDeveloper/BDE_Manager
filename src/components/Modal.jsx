@@ -48,16 +48,15 @@ export default function Modal({
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
 
-    const raf = requestAnimationFrame(() => {
-      const target = initialFocusRef?.current
-        || panelRef.current?.querySelector('[data-autofocus]')
-        || panelRef.current?.querySelector(FOCUSABLE)
-        || panelRef.current;
-      target?.focus();
-    });
+    // Le DOM du dialogue est déjà monté quand l'effet s'exécute : focus
+    // immédiat (ne dépend pas du rendu graphique, contrairement à rAF).
+    const target = initialFocusRef?.current
+      || panelRef.current?.querySelector('[data-autofocus]')
+      || panelRef.current?.querySelector(FOCUSABLE)
+      || panelRef.current;
+    target?.focus();
 
     return () => {
-      cancelAnimationFrame(raf);
       const i = openStack.indexOf(token);
       if (i !== -1) openStack.splice(i, 1);
       if (openStack.length === 0) document.body.style.overflow = prevOverflow;

@@ -107,7 +107,7 @@ export default function MemberCard({ member, onEdit }) {
           onClick={handleEdit}
           aria-label={`Modifier ${name}`}
           title="Modifier"
-          className="bg-elevated hover:bg-blue-600 text-dim hover:text-white p-1.5 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+          className="tap bg-elevated hover:bg-blue-600 text-dim hover:text-white p-1.5 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
           <Pencil size={12} aria-hidden="true" />
         </button>
         <button
@@ -116,7 +116,7 @@ export default function MemberCard({ member, onEdit }) {
           onClick={handleDelete}
           aria-label={`Supprimer ${name}`}
           title="Supprimer"
-          className="bg-elevated hover:bg-red-600 text-dim hover:text-white p-1.5 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500">
+          className="tap bg-elevated hover:bg-red-600 text-dim hover:text-white p-1.5 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500">
           <Trash2 size={12} aria-hidden="true" />
         </button>
       </div>
