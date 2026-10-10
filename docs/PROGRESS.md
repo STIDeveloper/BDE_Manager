@@ -4,6 +4,7 @@
 > s'accompagne de sa preuve (test automatisé, commande ou parcours vérifié dans
 > un navigateur). ⚠️ signale une limite connue, ⏳ un point restant à faire.
 
+**Production** : https://bde-manager.vercel.app (Vercel, en-têtes de sécurité actifs).
 **Dépôt GitHub** : https://github.com/STIDeveloper/BDE_Manager (public), branche `main`.
 
 **Points de restauration Git :**
@@ -140,8 +141,32 @@ Nouvel onglet **Documents** : génération automatique de documents professionne
 - ⚠️ La sauvegarde de l'**ancien historique** (avec les données réelles) reste **uniquement en local** dans `refs/original/` ; elle n'est jamais poussée. Pour la supprimer définitivement : `git update-ref -d refs/original/refs/heads/main && git update-ref -d refs/original/refs/tags/baseline-pre-refacto && git reflog expire --expire=now --all && git gc --prune=now`.
 - Pour rattacher les futurs commits à ton profil GitHub : `git config user.email <ton-id>+<pseudo>@users.noreply.github.com`.
 
+## Phase 4 — Les 12 propositions (terminé)
+Architecture : socle commun (`src/core/createModuleStore.js`, `moduleRegistry.js`, `attachments.js` IndexedDB, `router.js`, `permissions.js`), un dossier par module (`src/modules/<module>/` : `store.js` chargé au démarrage, `Page.jsx` chargé à la demande), contrats de données partagés (`src/modules/contracts.js`), émission de documents programmatique (`src/documents/issue.js`). Navigation groupée (barre latérale / barre inférieure + menu « Plus »).
+
+| Module | Fonctionnel | Interconnexions vérifiées |
+|---|---|---|
+| Trésorerie | Opérations, justificatifs, validation (droit `finance.validate`), budgets, import bancaire avec doublons, rapport AG | Événements (dépenses/recettes liées), Adhésions, Documents (rapport financier), Accueil |
+| Adhésions | Campagnes, paiement → recette liée (bidirectionnel), reçus numérotés, relances mailto, import HelloAsso | Trésorerie, Documents, Agenda (date limite), Accueil |
+| Événements | Tâches, bénévoles, inscriptions + liste d'attente automatique, pointage, budget, bilan, annonces, .ics | Trésorerie, Documents (émargement, attestations), Agenda, Accueil |
+| Agenda & rappels | Échéances calculées (événements, mandats, AG, déclaration des dirigeants, cotisations, assurance), rappels récurrents, notifications (app ouverte), export .ics RFC 5545 | Tous les modules ; clic sur notification → Agenda |
+| Accueil (président) | Score de santé expliqué, KPI, « À traiter » priorisé (9 sources), widgets personnalisables | Tous les modules |
+| Passation guidée | 6 étapes : rôle, Drive, coffre (libellés), documents, clôture ; reprise et annulation | Membres, Drive, Coffre, Documents |
+| Documents avancés | Modèles personnalisés no-code avec variables, envoi mailto, signature sur l'appareil, QR de vérification + page publique `#/verifier`, dossier annuel, archives | Registre, modules émetteurs |
+| Backend collaboratif | Supabase : schéma + RLS (64 contrôles PGlite), auth, invitations, matrice de droits, synchro temps réel hors-ligne, numérotation serveur, vérification publique anonyme | Toutes les tranches de données |
+
+**Corrigé pendant l'intégration** : page publique de vérification redirigée vers l'accueil (QR inutilisable) ; compteur d'adhésions incohérent entre l'accueil (1/1) et la page Adhésions (1/22) ; débordement de l'en-tête sur mobile ; numérotation serveur branchée dans le studio et l'émission programmatique.
+
+**Vérifications** : lint 0, 281/281 tests existants, build ; parcours navigateur inter-modules ; 13 sections sans débordement à 375 px ; build de production servi avec les en-têtes Vercel : 0 violation CSP, 0 erreur console ; production en ligne (HTML, manifeste, service worker, icônes en 200).
+
+**Limites** :
+- ⚠️ Le **backend n'a pas été testé contre un vrai projet Supabase** (aucun n'existe encore) : SQL et droits validés sur Postgres (PGlite), synchro validée avec un client simulé. À faire : créer le projet (voir `supabase/README.md`).
+- Notifications uniquement quand l'app est ouverte (pas de serveur de push) ; export .ics ponctuel (pas d'abonnement).
+- Envoi d'emails via `mailto:` (le PDF est à joindre à la main).
+- Le navigateur intégré ne peut pas ouvrir le domaine de production (réglage de sites) : production vérifiée par requêtes HTTP + build identique en local.
+
 ## Décisions en attente (ton autorisation est requise)
-1. **Déploiement Vercel** (`vercel --prod`) : projet déjà lié (`.vercel/project.json`, projet « bde-manager »).
+1. **Projet Supabase** à créer par toi (gratuit) pour activer la collaboration — voir `supabase/README.md`.
 
 ## Prochaines actions possibles
 - Après déploiement : vérifier l'installation PWA sur iPhone et Android, puis le cycle de mise à jour du service worker.
