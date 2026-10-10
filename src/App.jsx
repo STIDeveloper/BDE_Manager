@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, lazy, Suspense, useId } from 'react';
 import {
   Lock, LayoutDashboard, BarChart3, FolderTree, Network, Settings2, FileText, Loader2,
-  Home, CalendarDays, PartyPopper, Wallet, IdCard, Repeat, MoreHorizontal, X,
+  Home, CalendarDays, PartyPopper, Wallet, IdCard, Repeat, MoreHorizontal, X, ShieldCheck,
 } from 'lucide-react';
 import { useStore } from './store';
 import KanbanBoard from './components/KanbanBoard';
@@ -48,6 +48,7 @@ const SECTIONS = [
     { id: 'drive', label: 'Drive', short: 'Drive', icon: FolderTree },
     { id: 'stats', label: 'Statistiques', short: 'Stats', icon: BarChart3 },
     { id: 'sensitive', label: 'Coffre-fort', short: 'Coffre', icon: Lock },
+    { id: 'team', label: 'Équipe & accès', short: 'Accès', icon: ShieldCheck, module: 'team' },
   ] },
 ];
 
