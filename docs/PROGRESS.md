@@ -4,10 +4,12 @@
 > s'accompagne de sa preuve (test automatisé, commande ou parcours vérifié dans
 > un navigateur). ⚠️ signale une limite connue, ⏳ un point restant à faire.
 
-**Points de restauration Git (locaux, rien n'a été poussé) :**
+**Dépôt GitHub** : https://github.com/STIDeveloper/BDE_Manager (public), branche `main`.
+
+**Points de restauration Git :**
 - `baseline-pre-refacto` (commit `1dd70ec`) : état exact avant toute modification.
 - Commit `14f64d1` : fondations (catalogue, migration, coffre, PWA).
-- Restaurer l'état d'origine : `git checkout baseline-pre-refacto`.
+- Restaurer l'état d'origine (anonymisé) : `git checkout baseline-pre-refacto`.
 
 ---
 
@@ -131,10 +133,15 @@ Nouvel onglet **Documents** : génération automatique de documents professionne
 - ⚠️ La police Inter vient de Google Fonts. Hors ligne avant la première mise en cache, la police système prend le relais.
 - Quelques ids historiques restent dans des règles du moteur (bonus de succession pour `vice_president`, alerte `president_contest`). Ces règles sont ignorées sans erreur si ces rôles sont supprimés.
 
+## Publication GitHub & protection des données (terminé)
+- Avant le premier push, le dépôt (public) contenait les **vraies réponses au formulaire de recrutement** (noms, téléphones, emails personnels de 30 étudiants) dans `src/roleEngine/tests/real_responses.csv` et dans l'ancienne archive `bde-managervtt.zip`, ainsi que les noms réels du bureau dans le seed.
+- Décision : anonymisation de **tout l'historique** avant publication (`git filter-branch`), avec des noms fictifs cohérents (mêmes choix de rôles, mêmes résultats du moteur), des téléphones `06000000NN` et des emails `@exemple.fr`. Le seed « Charger la config officielle » charge désormais des membres **fictifs** (structure, rôles et permissions inchangés).
+- Vérifié sur chacun des 6 commits : 0 identité réelle, 0 archive, 0 email personnel ; 281/281 tests après anonymisation. Les commits sont signés avec une adresse neutre (`bde-manager@localhost.invalid`) au lieu de ton email personnel.
+- ⚠️ La sauvegarde de l'**ancien historique** (avec les données réelles) reste **uniquement en local** dans `refs/original/` ; elle n'est jamais poussée. Pour la supprimer définitivement : `git update-ref -d refs/original/refs/heads/main && git update-ref -d refs/original/refs/tags/baseline-pre-refacto && git reflog expire --expire=now --all && git gc --prune=now`.
+- Pour rattacher les futurs commits à ton profil GitHub : `git config user.email <ton-id>+<pseudo>@users.noreply.github.com`.
+
 ## Décisions en attente (ton autorisation est requise)
 1. **Déploiement Vercel** (`vercel --prod`) : projet déjà lié (`.vercel/project.json`, projet « bde-manager »).
-2. **Push GitHub** (`git remote add origin … && git push -u origin main`).
-3. **Fichiers inutiles** à supprimer (non utilisés, toujours récupérables via Git) : `src/components/FolderManagerModal.jsx` (doublon orphelin), `fix_toast.js` (script ponctuel déjà appliqué), `bde-managervtt.zip` (ancienne archive de septembre), `src/App.css`, `src/assets/{hero.png,react.svg,vite.svg}`, `public/icons.svg` (restes du modèle Vite).
 
 ## Prochaines actions possibles
 - Après déploiement : vérifier l'installation PWA sur iPhone et Android, puis le cycle de mise à jour du service worker.
