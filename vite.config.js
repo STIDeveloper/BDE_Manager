@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 function previewHeaders() {
   try {
     const vercel = JSON.parse(readFileSync(new URL('./vercel.json', import.meta.url), 'utf8'));
-    const global = vercel.headers?.find((h) => h.source === '/(.*)')?.headers ?? [];
+    const global = vercel.headers?.find((h) => h.source === '/((?!f/).*)' || h.source === '/(.*)')?.headers ?? [];
     return Object.fromEntries(global
       .filter((h) => h.key !== 'Strict-Transport-Security')
       .map((h) => [h.key, h.key === 'Content-Security-Policy'
