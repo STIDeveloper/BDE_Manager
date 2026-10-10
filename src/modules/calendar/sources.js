@@ -20,11 +20,15 @@ const findStore = (mods) => {
 
 const eventsMods = import.meta.glob('../events/store.js', { eager: true });
 const membershipMods = import.meta.glob('../membership/store.js', { eager: true });
+const tasksMods = import.meta.glob('../tasks/store.js', { eager: true });
+const taskSelectorMods = import.meta.glob('../tasks/selectors.js', { eager: true });
+const getTaskDeadlines = Object.values(taskSelectorMods)[0]?.getTaskDeadlines || (() => []);
 
 // Store vide de repli : les hooks sont toujours appelés (règles des hooks).
 const useEmpty = create(() => ({}));
 const useEventsSource = findStore(eventsMods) || useEmpty;
 const useMembershipSource = findStore(membershipMods) || useEmpty;
+const useTasksSource = findStore(tasksMods) || useEmpty;
 
 export const hasEventsModule = useEventsSource !== useEmpty;
 export const hasMembershipModule = useMembershipSource !== useEmpty;
@@ -45,7 +49,9 @@ export function getAgendaSnapshot({ today = ymd(new Date()), from, to } = {}) {
   const cal = useCalendarStore.getState();
   const ev = useEventsSource.getState();
   const ms = useMembershipSource.getState();
+  const tk = useTasksSource.getState();
   return getAgendaItems({
+    taskDeadlines: getTaskDeadlines(tk.tasks, tk.boards, { today }),
     main, documentLog: main.documentLog,
     events: ev.events, memberships: ms.memberships, membershipSettings: ms.settings,
     reminders: cal.reminders, settings: { ...DEFAULT_CALENDAR_SETTINGS, ...cal.settings },
@@ -66,12 +72,15 @@ export function useAgendaSources() {
   const events = useEventsSource(s => s.events);
   const memberships = useMembershipSource(s => s.memberships);
   const membershipSettings = useMembershipSource(s => s.settings);
+  const tasks = useTasksSource(s => s.tasks);
+  const boards = useTasksSource(s => s.boards);
   return useMemo(() => ({
+    taskDeadlines: getTaskDeadlines(tasks, boards),
     main: { members, roles, levels, poles, organization },
     documentLog, reminders,
     settings: { ...DEFAULT_CALENDAR_SETTINGS, ...settings },
     events, memberships, membershipSettings,
-  }), [members, roles, levels, poles, organization, documentLog, reminders, settings, events, memberships, membershipSettings]);
+  }), [members, roles, levels, poles, organization, documentLog, reminders, settings, events, memberships, membershipSettings, tasks, boards]);
 }
 
 /** Hook : éléments d'agenda sur [from, to]. */

@@ -13,9 +13,11 @@
 // chargés (grants null) n'accordent RIEN (refus par défaut).
 //
 // Capacités (familles) : members, catalog, drive, documents, organization,
-//   vault, recruitment, finance, membership, events, calendar, handover, admin
+//   vault, recruitment, finance, membership, events, calendar, handover, tasks,
+//   forms, admin
 // Niveaux : 'read' < 'write' < 'validate' < 'manage'
 //   - finance.validate : valider / rejeter une dépense ;
+//   - tasks.validate : approuver une tâche soumise à validation ;
 //   - admin.manage : gérer les comptes, rôles d'accès et invitations.
 // ============================================================
 
@@ -34,6 +36,8 @@ export const CAPABILITIES = [
   { id: 'events', label: 'Événements' },
   { id: 'calendar', label: 'Agenda' },
   { id: 'handover', label: 'Passations' },
+  { id: 'tasks', label: 'Tâches' },
+  { id: 'forms', label: 'Formulaires' },
   { id: 'admin', label: 'Administration' },
 ];
 export const LEVELS = ['none', 'read', 'write', 'validate', 'manage'];

@@ -61,6 +61,22 @@
 //                       startedAt, completedAt?, createdAt, updatedAt,
 //                       handoverDate?, exitMode?, driveSnapshot?, vaultChecks?, finalChecks?, notes? } }
 //
+// ── tasks (useTasksStore, src/modules/tasks/store.js) ──
+// boards: { [id]: { id, title, description, poleId?, archived,
+//   columns: [{ id, title, color (hex), wipLimit?, done? }],   // done : colonne « terminé »
+//   createdAt, updatedAt } }        // 'board-general' (« Général ») créé par défaut
+// tasks: { [id]: {
+//   id, boardId, columnId, title, description, assigneeIds: memberId[], dueDate? ('AAAA-MM-JJ'),
+//   priority: 'low'|'normal'|'high'|'urgent', labels: string[],
+//   checklist: [{ id, text, done }], attachments: AttachmentMeta[],
+//   links: { eventId?, formId?, responseId?, transactionId?, memberId? },
+//   requiresApproval?: boolean, approvedBy?, approvedAt?,   // terminé bloqué tant que non approuvée
+//   order (position dans la colonne), createdAt, updatedAt, completedAt?,
+//   source?: 'manuel'|'formulaire'|'automatisation'|'evenement' } }
+// API (hors React) : src/modules/tasks/actions.js → createTask(input), moveTask(id, columnId, index),
+//   assignTask(id, memberIds), completeTask(id), approveTask(id, approverId), findBoard(idOrTitle).
+// Lecture : src/modules/tasks/selectors.js → getTaskDeadlines(tasks, boards, opts) (agenda / accueil).
+//
 // ── documents avancés (store principal + useDocumentsExtraStore) ──
 // customTemplates: { [id]: CustomTemplate }   (modèles personnalisés no-code)
 // signatures: { [docLogId]: { signedAt, signerName, image } }   (circuit de signature)

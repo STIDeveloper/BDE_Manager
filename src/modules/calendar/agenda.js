@@ -232,6 +232,17 @@ export function getAgendaItems(input = {}) {
     });
   });
 
+  // ── Tâches des tableaux (module tâches : échéances calculées par getTaskDeadlines) ──
+  (input.taskDeadlines || []).forEach(t => {
+    if (!t?.date || t.done || !inRange(t.date)) return;
+    push({
+      id: t.id, source: 'board-task', category: 'equipe', actionable: true,
+      date: t.date, title: t.title || 'Tâche',
+      subtitle: `Tâche${t.boardTitle ? ` — ${t.boardTitle}` : ''}${t.priorityLabel && t.priority !== 'normal' ? ` · ${t.priorityLabel}` : ''}`,
+      link: { section: 'tasks', path: t.boardId },
+    });
+  });
+
   // ── Mandats ──
   ctx.members.forEach(m => {
     const name = fullName(m) || 'Membre';
