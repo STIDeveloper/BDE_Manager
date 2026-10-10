@@ -121,14 +121,19 @@ export function treasuryStats(transactions = {}, settings = {}, today = new Date
 /** Cotisations de la campagne en cours (module adhésions), sinon d'après les fiches membres. */
 export function membershipStats({ memberships, settings, available }, active = [], today = new Date()) {
   if (available) {
+    // Même règle que la page Adhésions : chaque membre actif est attendu
+    // (cotisation « à payer » s'il n'en a pas encore), exonérés exclus.
     const campaign = settings?.campaignYear || academicYear(today);
-    const list = Object.values(memberships || {}).filter(x => x && x.year === campaign);
-    const paid = list.filter(x => x.status === 'paid');
-    const due = list.filter(x => x.status === 'due');
+    const byMember = new Map();
+    Object.values(memberships || {}).forEach(x => { if (x && x.year === campaign) byMember.set(x.memberId, x); });
+    const statuses = active.map(m => byMember.get(m.id)?.status || 'due');
+    const paidRecords = active.map(m => byMember.get(m.id)).filter(x => x?.status === 'paid');
+    const paid = statuses.filter(st => st === 'paid').length;
+    const due = statuses.filter(st => st === 'due').length;
     return {
       source: 'module', campaign,
-      paid: paid.length, total: paid.length + due.length, due: due.length,
-      amount: roundMoney(paid.reduce((s, x) => s + (Number(x.amount) || 0), 0)),
+      paid, total: statuses.filter(st => st !== 'exempt').length, due,
+      amount: roundMoney(paidRecords.reduce((s, x) => s + (Number(x.amount) || 0), 0)),
       dueDate: settings?.dueDate || '',
     };
   }

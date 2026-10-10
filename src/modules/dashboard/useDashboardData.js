@@ -1,3 +1,4 @@
+import { isPlaceholderMember } from '../../documents/context.js';
 // Hook : toutes les données du tableau de bord, dérivées en direct des stores.
 import { useMemo, useState } from 'react';
 import { useStore } from '../../store.js';
@@ -56,7 +57,13 @@ export function useDashboardData() {
     const dismissedSet = new Set(dismissed);
     const suggestions = collectSuggestions(docCtx).filter(s => !dismissedSet.has(`${s.templateId || ''}:${s.id || ''}`));
     const treasury = hasFinance ? treasuryStats(transactions || {}, financeSettings || {}, today) : null;
-    const membership = membershipStats({ memberships, settings: membershipSettings, available: hasMembership }, active, today);
+    const membership = membershipStats(
+      { memberships, settings: membershipSettings, available: hasMembership },
+      // Même population que la page Adhésions : tous les membres réels (un
+      // ancien membre peut renouveler), fiches « poste vacant » exclues.
+      hasMembership ? members.filter(m => !isPlaceholderMember(m)) : active,
+      today,
+    );
     const upcoming = upcomingEvents(events, today);
     const ev = eventStats(upcoming, events, today);
     const candidates = handoverCandidates(realMembers, handovers, documentLog, today)

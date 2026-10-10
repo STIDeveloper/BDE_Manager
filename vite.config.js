@@ -88,6 +88,8 @@ export default defineConfig({
       manifest: false,
       devOptions: { enabled: false },
       workbox: {
+        // Gestion du clic sur les notifications de l'agenda.
+        importScripts: ['sw-notifications.js'],
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2,webmanifest}'],
         // Non précachés : écrans de démarrage iOS (46 jpg, servis à l'installation) et
         globIgnores: ['**/apple-splash-*.jpg', '**/node_modules/**'],

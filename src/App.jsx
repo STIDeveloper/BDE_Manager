@@ -55,6 +55,9 @@ const SECTIONS = [
   ] },
 ];
 
+// Routes publiques, affichées hors de la coque de l'application.
+const PUBLIC_SECTIONS = new Set(['verifier']);
+
 // Sections affichées dans la barre inférieure mobile (le reste : menu « Plus »).
 const MOBILE_PRIMARY = ['dashboard', 'kanban', 'calendar', 'documents'];
 
@@ -90,6 +93,8 @@ function AppShell() {
 
   // Ancien lien / URL vide : on normalise vers la section par défaut.
   useEffect(() => {
+    // Les routes publiques (ex. #/verifier du QR code) ne sont jamais réécrites.
+    if (PUBLIC_SECTIONS.has(route.section)) return;
     if (!allItems.some(i => i.id === route.section)) {
       window.history.replaceState(null, '', `#/${defaultId}`);
     }
@@ -296,7 +301,7 @@ function AppShell() {
 export default function App() {
   const route = useRoute();
   // Route publique : affichée seule, sans la navigation de l'application.
-  if (route.section === 'verifier') {
+  if (PUBLIC_SECTIONS.has(route.section)) {
     return (
       <Suspense fallback={<Loading label="Chargement de la vérification…" />}>
         <VerifyPage />
